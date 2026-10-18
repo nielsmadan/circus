@@ -291,6 +291,30 @@ describe('InboxView decisions', () => {
     expect(api.count('decide')).toBe(0);
   });
 
+  it('re-selects the row when its toast Undo button is clicked, like z', async () => {
+    await renderInbox();
+    press('KeyE', { shiftKey: true });
+    expect(selectedId()).toBe(login.id);
+    const toast = screen.getByText('Archive “fix parser”').parentElement as HTMLElement;
+    click(within(toast).getByRole('button', { name: /Undo/ }));
+    expect(shownIds()).toEqual([parser.id, login.id, docs.id]);
+    expect(selectedId()).toBe(parser.id);
+    expect(screen.getByText('Undid archive “fix parser”')).toBeInTheDocument();
+  });
+
+  it('undoes from the toast while another tab is showing', async () => {
+    await renderInbox();
+    press('KeyE', { shiftKey: true });
+    press('Digit2', { metaKey: true });
+    const toast = screen.getByText('Archive “fix parser”').parentElement as HTMLElement;
+    click(within(toast).getByRole('button', { name: /Undo/ }));
+    expect(screen.getByText('Undid archive “fix parser”')).toBeInTheDocument();
+    press('Digit3', { metaKey: true });
+    expect(shownIds()).toEqual([parser.id, login.id, docs.id]);
+    await advance(4_000);
+    expect(api.count('decide')).toBe(0);
+  });
+
   it('sends delete only once its 10 s window has passed', async () => {
     await renderInbox();
     press('Digit3', { shiftKey: true });
@@ -403,6 +427,19 @@ describe('InboxView decisions', () => {
     expect(api.argsOf('decide').map(([request]) => [request.action, request.id])).toEqual([
       ['keep', parser.id],
     ]);
+  });
+
+  it('returns focus to the list when the palette closes, and to search when Search runs', async () => {
+    await renderInbox();
+    act(() => listbox().focus());
+    press('KeyK', { metaKey: true });
+    expect(screen.getByRole('textbox', { name: 'Search commands' })).toHaveFocus();
+    press('Escape');
+    expect(listbox()).toHaveFocus();
+    press('KeyK', { metaKey: true });
+    const palette = screen.getByRole('dialog', { name: 'Command palette' });
+    click(within(palette).getByRole('option', { name: /^Search/ }));
+    expect(search()).toHaveFocus();
   });
 
   it('keeps a pending archive across a tab switch and sends it on time', async () => {

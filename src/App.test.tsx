@@ -50,6 +50,15 @@ describe('App shell', () => {
     expect(screen.getByRole('tabpanel', { name: 'Inbox' })).toBeVisible();
   });
 
+  it('styles the selected section tab as selected', async () => {
+    renderApp();
+    const selectedStyle = 'aria-selected:bg-blue-500/15';
+    expect(screen.getByRole('tab', { name: 'Inbox' })).toHaveClass(selectedStyle);
+    await userEvent.click(screen.getByRole('tab', { name: 'Enrich' }));
+    expect(screen.getByRole('tab', { name: 'Enrich' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Enrich' })).toHaveClass(selectedStyle);
+  });
+
   it('switches to a stub while keeping the Inbox panel mounted', async () => {
     renderApp();
     await userEvent.click(screen.getByRole('tab', { name: 'Enrich' }));

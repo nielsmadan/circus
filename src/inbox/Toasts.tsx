@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import { inboxListContext } from '../shortcuts/contexts';
-import { useShortcutLabel } from '../shortcuts/react';
+import { useShortcutLabel, useShortcutRegistry } from '../shortcuts/react';
 import type { ToastTone } from './messages';
 import type { InboxController } from './useInbox';
 
@@ -11,7 +11,15 @@ const TONE_CLASS: Readonly<Record<ToastTone, string>> = {
 };
 
 export function Toasts({ controller }: { readonly controller: InboxController }): ReactElement {
+  const registry = useShortcutRegistry();
   const undoLabel = useShortcutLabel(inboxListContext, 'undo');
+  const undo = () => {
+    const inboxActive = registry
+      .activeBindings()
+      .groups.some((group) => group.contextId === inboxListContext.id);
+    if (inboxActive) registry.dispatch(inboxListContext, 'undo');
+    else controller.undo();
+  };
   const newestUnsent = controller.entries.findLast((entry) => entry.state !== 'sending');
   const undoTicket = newestUnsent?.decision.ticket ?? null;
   return (
@@ -32,7 +40,7 @@ export function Toasts({ controller }: { readonly controller: InboxController })
               type="button"
               tabIndex={-1}
               onMouseDown={(event) => event.preventDefault()}
-              onClick={() => controller.undo()}
+              onClick={undo}
               className="flex items-center gap-1 font-medium text-blue-600 dark:text-blue-400"
             >
               Undo

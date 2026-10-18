@@ -55,7 +55,7 @@ The Quit item is custom because the predefined one bypasses the gate. Dock › Q
 
 ## Shortcuts
 
-`@shortcutkit/core` provides contexts and a registry (`src/shortcuts/contexts.ts`, in-memory store, no rebinding UI). Reading-pane buttons and the palette call `registry.dispatch`, so mouse and keys share one path. The DOM host and React bindings in `src/shortcuts/` are temporary.
+`@shortcutkit/core` provides contexts and a registry (`src/shortcuts/contexts.ts`, in-memory store, no rebinding UI). Reading-pane buttons, the palette and the toast Undo button call `registry.dispatch`, so mouse and keys share one path (the toast falls back to `controller.undo()` while another tab hides the Inbox). The DOM host and React bindings in `src/shortcuts/` are temporary.
 
 | Context         | Action                                  | Default           |
 | --------------- | --------------------------------------- | ----------------- |

@@ -4,7 +4,14 @@ import {
   type KeyBindingEntry,
   type KeyBindings,
 } from '@shortcutkit/core';
-import { useState, useSyncExternalStore, type KeyboardEvent, type ReactElement } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type KeyboardEvent,
+  type ReactElement,
+} from 'react';
 import { appContext, paletteContext, snoozeDialogContext } from '../shortcuts/contexts';
 import { useShortcutContext, useShortcutRegistry } from '../shortcuts/react';
 
@@ -58,6 +65,16 @@ function PaletteBody({ onClose }: { readonly onClose: () => void }): ReactElemen
   useSyncExternalStore(registry.subscribe, registry.getSnapshot);
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
+  const [opener] = useState(() => document.activeElement);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = dialogRef.current;
+    return () => {
+      if (node?.isConnected) return;
+      const focusLost = document.activeElement === null || document.activeElement === document.body;
+      if (focusLost && opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
+  }, [opener]);
   const items = paletteItems(registry.activeBindings(), query);
   const current = Math.min(highlight, Math.max(items.length - 1, 0));
 
@@ -86,6 +103,7 @@ function PaletteBody({ onClose }: { readonly onClose: () => void }): ReactElemen
       }}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"

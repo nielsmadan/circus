@@ -44,6 +44,7 @@ export function App({ api }: { readonly api: CircusApi }) {
               aria-selected={tab === active}
               aria-controls={`panel-${tab}`}
               onClick={() => setActive(tab)}
+              className="rounded px-2 py-1 text-sm aria-selected:bg-blue-500/15 aria-selected:font-medium"
             >
               {tab}
             </button>
