@@ -17,7 +17,7 @@ const TAIL_MAX_CHARS: u32 = 2_000_000;
 const SESSION_MAX_CHARS: usize = 200;
 const TIME_MAX_CHARS: usize = 64;
 const FINGERPRINT_MAX_CHARS: usize = 256;
-const STDERR_TAIL_CHARS: usize = 2_000;
+pub(crate) const STDERR_TAIL_CHARS: usize = 2_000;
 const CONTRACT_VERSION: u64 = 1;
 const RL_TOO_OLD: &str = "The installed rl has no `rl gui` commands. Install the ringleader branch that has them: run `just install` in that ringleader checkout.";
 
@@ -141,7 +141,7 @@ pub fn decide_timeout(action: DecisionAction) -> Duration {
     }
 }
 
-fn last_chars(text: &str, count: usize) -> String {
+pub(crate) fn last_chars(text: &str, count: usize) -> String {
     let total = text.chars().count();
     text.chars().skip(total.saturating_sub(count)).collect()
 }

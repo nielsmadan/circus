@@ -7,6 +7,10 @@ fn main() {
             "rl_decide",
             "cached_list",
             "app_info",
+            "resume_session",
+            "set_pending",
+            "close_ack",
+            "app_exit",
         ]),
     ))
     .expect("Tauri build");

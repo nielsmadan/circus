@@ -8,6 +8,10 @@
     "allow-rl-tails",
     "allow-rl-decide",
     "allow-cached-list",
-    "allow-app-info"
+    "allow-app-info",
+    "allow-resume-session",
+    "allow-set-pending",
+    "allow-close-ack",
+    "allow-app-exit"
   ]
 }

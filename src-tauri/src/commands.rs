@@ -1,13 +1,25 @@
-use tauri::State;
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
 use tauri::ipc::Response;
+use tauri::{AppHandle, State};
 
 use crate::AppState;
 use crate::cache;
+use crate::close::CloseGate;
 use crate::config::{self, Resolved};
-use crate::contract::{AppInfo, DecideRequest, TailsRequest, TerminalKind};
+use crate::contract::{
+    AppInfo, DecideRequest, ResumeLaunch, ResumeRequest, TailsRequest, TerminalKind,
+};
 use crate::error::{CircusError, ErrorKind};
 use crate::process::SystemRunner;
+use crate::resume;
 use crate::rl::RlClient;
+
+pub const CLOSE_REQUESTED_EVENT: &str = "circus://close-requested";
+
+pub fn lock_gate(gate: &Mutex<CloseGate>) -> MutexGuard<'_, CloseGate> {
+    gate.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 async fn blocking<T, F>(work: F) -> Result<T, CircusError>
 where
@@ -111,4 +123,48 @@ pub async fn app_info(state: State<'_, AppState>) -> Result<AppInfo, CircusError
         },
         settings_path: state.settings_path.clone(),
     })
+}
+
+#[tauri::command]
+pub async fn resume_session(
+    state: State<'_, AppState>,
+    request: ResumeRequest,
+) -> Result<ResumeLaunch, CircusError> {
+    let resolved = std::sync::Arc::clone(&state.resolved);
+    let terminal_command = state.settings.terminal_command.clone();
+    let dry_run = state.resume_dry_run;
+    blocking(move || {
+        let resolved = resolved.wait();
+        let runner = resume::WithPath {
+            inner: &SystemRunner,
+            path_env: resolved.path_env.clone(),
+        };
+        resume::launch(
+            &runner,
+            &resolved.command,
+            &request.id,
+            terminal_command.as_deref(),
+            dry_run,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn set_pending(state: State<'_, AppState>, count: u32) {
+    lock_gate(&state.close).set_pending(count);
+}
+
+#[tauri::command]
+pub fn close_ack(state: State<'_, AppState>) {
+    lock_gate(&state.close).ack();
+}
+
+#[tauri::command]
+pub fn app_exit(app: AppHandle, state: State<'_, AppState>) {
+    // the watchdog thread shares this mutex, so the guard is dropped before exit
+    let first = lock_gate(&state.close).begin_exit();
+    if first {
+        app.exit(0);
+    }
 }

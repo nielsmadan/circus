@@ -1,17 +1,26 @@
 pub mod cache;
+pub mod close;
 pub mod commands;
 pub mod config;
 pub mod contract;
 pub mod error;
 pub mod process;
+pub mod resume;
 pub mod rl;
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use tauri::Manager;
+use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 
+use close::{CloseGate, close_effects};
+use commands::{CLOSE_REQUESTED_EVENT, lock_gate};
 use config::{EnvSnapshot, Pending, Resolved, Settings};
+
+const QUIT_MENU_ID: &str = "quit";
+const WATCHDOG_POLL: Duration = Duration::from_millis(250);
 
 pub struct AppState {
     pub resolved: Arc<Pending<Resolved>>,
@@ -21,6 +30,7 @@ pub struct AppState {
     pub world_root: Option<String>,
     pub resume_dry_run: bool,
     pub list_cache: Option<PathBuf>,
+    pub close: Arc<Mutex<CloseGate>>,
 }
 
 fn env_non_empty(key: &str) -> Option<String> {
@@ -41,7 +51,7 @@ fn load_settings(path: &std::path::Path) -> Settings {
     }
 }
 
-fn app_state(app: &tauri::AppHandle) -> AppState {
+fn app_state(app: &AppHandle, close: Arc<Mutex<CloseGate>>) -> AppState {
     let settings_file = match app.path().app_config_dir() {
         Ok(dir) => Some(dir.join("settings.json")),
         Err(error) => {
@@ -95,15 +105,97 @@ fn app_state(app: &tauri::AppHandle) -> AppState {
         world_root,
         resume_dry_run: std::env::var("CIRCUS_RESUME_DRY_RUN").is_ok_and(|value| value == "1"),
         list_cache,
+        close,
     }
 }
 
+fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    // replaces the predefined Quit, which tao never routes through ExitRequested (tauri-apps/tauri#9198)
+    let quit = MenuItemBuilder::with_id(QUIT_MENU_ID, "Quit Circus")
+        .accelerator("CmdOrCtrl+Q")
+        .build(app)?;
+    let circus = SubmenuBuilder::new(app, "Circus")
+        .about(None)
+        .separator()
+        .services()
+        .separator()
+        .hide()
+        .hide_others()
+        .show_all()
+        .separator()
+        .item(&quit)
+        .build()?;
+    let edit = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+    let window = SubmenuBuilder::new(app, "Window")
+        .minimize()
+        .close_window()
+        .build()?;
+    MenuBuilder::new(app)
+        .items(&[&circus, &edit, &window])
+        .build()
+}
+
+fn spawn_watchdog(app: AppHandle, gate: Arc<Mutex<CloseGate>>) {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(WATCHDOG_POLL);
+            let exit = {
+                let mut gate = lock_gate(&gate);
+                gate.fallback_due(Instant::now()) && gate.begin_exit()
+            };
+            if exit {
+                app.exit(0);
+                return;
+            }
+        }
+    });
+}
+
+fn on_close_request(app: &AppHandle, gate: &Arc<Mutex<CloseGate>>) -> bool {
+    let action = lock_gate(gate).request(Instant::now());
+    let effects = close_effects(action);
+    if effects.spawn_watchdog {
+        spawn_watchdog(app.clone(), Arc::clone(gate));
+    }
+    if effects.emit
+        && let Err(error) = app.emit(CLOSE_REQUESTED_EVENT, ())
+    {
+        eprintln!("circus: could not emit {CLOSE_REQUESTED_EVENT}: {error}");
+    }
+    effects.prevent
+}
+
 pub fn run() {
-    tauri::Builder::default()
-        .setup(|app| {
-            let state = app_state(app.handle());
+    let gate = Arc::new(Mutex::new(CloseGate::default()));
+    let setup_gate = Arc::clone(&gate);
+    let window_gate = Arc::clone(&gate);
+    let menu_gate = Arc::clone(&gate);
+    let app = tauri::Builder::default()
+        .setup(move |app| {
+            app.set_menu(app_menu(app.handle())?)?;
+            let state = app_state(app.handle(), setup_gate);
             app.manage(state);
             Ok(())
+        })
+        .on_window_event(move |window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event
+                && on_close_request(window.app_handle(), &window_gate)
+            {
+                api.prevent_close();
+            }
+        })
+        .on_menu_event(move |app, event| {
+            if event.id().as_ref() == QUIT_MENU_ID && !on_close_request(app, &menu_gate) {
+                app.exit(0);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::rl_list,
@@ -112,7 +204,20 @@ pub fn run() {
             commands::rl_decide,
             commands::cached_list,
             commands::app_info,
+            commands::resume_session,
+            commands::set_pending,
+            commands::close_ack,
+            commands::app_exit,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Circus");
+        .build(tauri::generate_context!())
+        .expect("error while building Circus");
+    app.run(move |app, event| {
+        if let RunEvent::ExitRequested {
+            code: None, api, ..
+        } = event
+            && on_close_request(app, &gate)
+        {
+            api.prevent_exit();
+        }
+    });
 }
