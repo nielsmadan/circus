@@ -95,6 +95,21 @@ Decision keys do not repeat when held. Splits are Recent (last 7 days, newest fi
 - No shell plugin, no generic exec, no reading of `registry.json`.
 - The sandbox decision guard refuses decisions when the registry is outside the world root.
 
+## Settled decisions
+
+Do not re-propose these without new evidence.
+
+- **Spawn `rl`; no embedded logic, no sidecar.** Revalidation, presence refusal, lifecycle checks and locks stay in ringleader and are reached only through `rl gui`; circus never reads `registry.json`, never calls `rl session …` and has no generic exec. The price is a cold `rl` spawn per call, paid down by `rl gui`'s lazy imports, batched tails, the list cache and prefetch. A persistent `rl gui serve` is the next lever if that is not enough (see `docs/development.md`); it is deliberately not built.
+- **Raw-bytes IPC.** Lists run to thousands of rows; deserializing them into a `serde_json::Value` tree and serializing again in Rust would cost more than the one `JSON.parse` in the webview. Rust types the requests and checks only the envelope.
+- **Partition rules live in one place.** `rl gui list` returns every triage-relevant row with `in_recent` and `woke` flags; `src/inbox/derive.ts` partitions, orders, counts and groups. A row with a missing or malformed `mtime` makes the whole `list` an `error` document (the TUI fails the same way); there is no per-row skip.
+- **Delete grace is the GUI's.** `rl gui decide delete` acts at once; the 10 s window is the outbox's, mirroring the TUI's delete grace.
+- **No outer lock around decide, one decision per session in flight.** Ringleader's ops take their own locks (a second `flock` in the same process would self-deadlock), so the outbox keeps at most one entry per session id and never retries.
+- **No outbox persistence.** A crash or an uninterceptable quit drops unsent decisions: nothing happens and the rows return next launch. Replaying stale intent after a restart is the unsafe direction.
+- **Single instance is not enforced.** A second `Circus` has its own outbox; ringleader revalidates every destructive op under its locks, so a decision made in both is refused or fails rather than applied twice.
+- **Decisions on cached rows are allowed.** Ringleader revalidates `mtime` and fingerprint, so a stale cached row can only be refused.
+- **No heavy frontend libraries.** No markdown renderer, date library or state-management library; `Intl.DateTimeFormat` instances are created once at module level. `requestIdleCallback` is not used (WKWebView lacks it).
+- **Contract changes bump both sides together.** See `docs/development.md`.
+
 ## Performance
 
 Budgets (enforced in `just check`):
