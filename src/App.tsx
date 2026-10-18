@@ -1,7 +1,18 @@
 import { useState } from 'react';
+import { CommandPalette } from './palette/CommandPalette';
+import { appContext } from './shortcuts/contexts';
+import { useShortcutContext } from './shortcuts/react';
 
 const TABS = ['Enrich', 'Triage', 'Inbox', 'Harvest'] as const;
 type Tab = (typeof TABS)[number];
+type AppAction = (typeof appContext.actionIds)[number];
+
+const TAB_FOR_ACTION: Readonly<Partial<Record<AppAction, Tab>>> = {
+  goEnrich: 'Enrich',
+  goTriage: 'Triage',
+  goInbox: 'Inbox',
+  goHarvest: 'Harvest',
+};
 
 function Panel({ tab }: { tab: Tab }) {
   if (tab === 'Inbox') return <p>Inbox placeholder</p>;
@@ -10,6 +21,15 @@ function Panel({ tab }: { tab: Tab }) {
 
 export function App() {
   const [active, setActive] = useState<Tab>('Inbox');
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  useShortcutContext(appContext, (action) => {
+    if (action === 'openPalette') {
+      setPaletteOpen(true);
+      return;
+    }
+    const tab = TAB_FOR_ACTION[action];
+    if (tab) setActive(tab);
+  });
   return (
     <div className="flex h-screen flex-col">
       <header className="border-b px-4 py-2">
@@ -41,6 +61,7 @@ export function App() {
           <Panel tab={tab} />
         </main>
       ))}
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   );
 }
