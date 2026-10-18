@@ -1,4 +1,6 @@
 manifest := "src-tauri/Cargo.toml"
+ringleader := env_var_or_default("CIRCUS_RINGLEADER", "../circus-worktrees/ringleader")
+golden_names := "gui-list.json gui-tails.json gui-outcome-ok.json gui-outcome-refused.json"
 
 [private]
 default:
@@ -68,6 +70,11 @@ doctor:
     else
         printf '  warn     %-12s needed for the sandbox recipes\n' '../circus-worktrees/ringleader'
     fi
+    if {{just_executable()}} --justfile {{justfile()}} golden-check >/dev/null 2>&1; then
+        printf '  ok       golden documents\n'
+    else
+        printf '  warn     %-12s stale or missing; run: just sync-golden\n' 'golden documents'
+    fi
     if [ -d "$core" ]; then
         hash="$(find "$core" -name '*.ts' | LC_ALL=C sort | xargs shasum | shasum | cut -c1-12)"
         printf 'core src hash: %s\n' "$hash"
@@ -118,8 +125,41 @@ dev-sandbox: ensure-dist
     source scripts/sandbox-env.sh
     pnpm tauri dev
 
+# Copy ringleader's golden `rl gui` documents into src/test/golden.
+sync-golden:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source_dir="{{ringleader}}/tests/golden"
+    shopt -s nullglob
+    files=("$source_dir"/gui-*.json)
+    if [ "${#files[@]}" -eq 0 ]; then
+        echo "no golden documents in $source_dir" >&2
+        exit 1
+    fi
+    mkdir -p src/test/golden
+    cp "${files[@]}" src/test/golden/
+    printf 'copied %s golden documents from %s\n' "${#files[@]}" "$source_dir"
+
+# Fail when src/test/golden differs from ringleader's golden documents.
+golden-check:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    source_dir="{{ringleader}}/tests/golden"
+    shopt -s nullglob
+    names=({{golden_names}})
+    for file in "$source_dir"/gui-*.json; do
+        names+=("$(basename "$file")")
+    done
+    for name in $(printf '%s\n' "${names[@]}" | sort -u); do
+        if ! cmp -s "$source_dir/$name" "src/test/golden/$name"; then
+            echo "golden documents are stale — run just sync-golden ($name)" >&2
+            exit 1
+        fi
+    done
+    echo "golden documents are current"
+
 # Run the Rust client against real `rl gui` in a freshly built synthetic world.
-smoke-sandbox: ensure-dist
+smoke-sandbox: golden-check ensure-dist
     #!/usr/bin/env bash
     set -euo pipefail
     source scripts/sandbox-env.sh
