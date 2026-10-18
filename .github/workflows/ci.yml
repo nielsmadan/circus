@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: circus
+      # This job cannot pass until nielsmadan/shortcutkit-js is pushed.
+      - uses: actions/checkout@v7
+        with:
+          repository: nielsmadan/shortcutkit-js
+          path: shortcutkit-js
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: circus/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            circus/pnpm-lock.yaml
+            shortcutkit-js/pnpm-lock.yaml
+      - uses: extractions/setup-just@v4
+      - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+      - run: pnpm install --frozen-lockfile
+        working-directory: shortcutkit-js
+      - run: pnpm --filter @shortcutkit/core build
+        working-directory: shortcutkit-js
+      - run: pnpm install --frozen-lockfile
+        working-directory: circus
+      - run: just check
+        working-directory: circus
