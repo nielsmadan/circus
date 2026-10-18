@@ -22,12 +22,20 @@ export function markSelect(id: string): void {
   }
 }
 
+export function clearSelect(id: string): void {
+  if (!import.meta.env.DEV || !canMark()) return;
+  try {
+    performance.clearMarks(`select:${id}`);
+  } catch {
+    // a dev-only measurement must never break selection
+  }
+}
+
 export function markPaint(id: string): void {
   if (!import.meta.env.DEV || !canMark()) return;
   try {
     performance.mark(`paint:${id}`);
     performance.measure(`select-to-paint:${id}`, `select:${id}`, `paint:${id}`);
-    performance.clearMarks(`select:${id}`);
     performance.clearMarks(`paint:${id}`);
   } catch {
     // the select mark may already be gone

@@ -13,6 +13,7 @@ import { inboxListContext, type InboxListAction } from '../shortcuts/contexts';
 import { useShortcutContext } from '../shortcuts/react';
 import { SnoozeDialog } from '../snooze/SnoozeDialog';
 import { Banners } from './Banners';
+import { Conversation } from './Conversation';
 import {
   filterByProject,
   indexRows,
@@ -25,7 +26,7 @@ import {
   SPLITS,
   type Split,
 } from './derive';
-import { hasSelectMark, markPaint, markSelect } from './perfMarks';
+import { clearSelect, hasSelectMark, markPaint, markSelect } from './perfMarks';
 import { ProjectSidebar } from './ProjectSidebar';
 import { ReadingPane } from './ReadingPane';
 import { effectiveViewport, ROW_HEIGHT, scrollToShow } from './rowWindow';
@@ -34,6 +35,7 @@ import { SessionList } from './SessionList';
 import { SplitTabs } from './SplitTabs';
 import { StatusBar } from './StatusBar';
 import type { InboxController } from './useInbox';
+import { useTails } from './useTails';
 
 export interface InboxViewProps {
   readonly controller: InboxController;
@@ -127,6 +129,14 @@ export function InboxView({ controller, api, visible }: InboxViewProps): ReactEl
 
   const selectedIndex = view.selectedId === null ? undefined : shownPositions.get(view.selectedId);
   const selectedRow = selectedIndex === undefined ? null : (shown[selectedIndex] ?? null);
+  const tail = useTails(api, shown, shownPositions, selectedRow, list?.sessions ?? null);
+  const conversation = useMemo(
+    () =>
+      selectedRow === null ? null : (
+        <Conversation row={selectedRow} item={tail.item} error={tail.error} />
+      ),
+    [selectedRow, tail.item, tail.error],
+  );
 
   const viewRef = useRef(view);
   const shownRef = useRef(shown);
@@ -176,10 +186,15 @@ export function InboxView({ controller, api, visible }: InboxViewProps): ReactEl
 
   const selectedId = view.selectedId;
   useEffect(() => {
-    if (selectedId === null || !hasSelectMark(selectedId)) return undefined;
-    if (typeof requestAnimationFrame !== 'function') return undefined;
-    const frame = requestAnimationFrame(() => markPaint(selectedId));
-    return () => cancelAnimationFrame(frame);
+    if (selectedId === null) return undefined;
+    const frame =
+      hasSelectMark(selectedId) && typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame(() => markPaint(selectedId))
+        : null;
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      clearSelect(selectedId);
+    };
   }, [selectedId]);
 
   const move = (delta: number) => {
@@ -369,7 +384,7 @@ export function InboxView({ controller, api, visible }: InboxViewProps): ReactEl
             />
           )}
         </div>
-        <ReadingPane row={selectedRow} conversation={null} />
+        <ReadingPane row={selectedRow} conversation={conversation} />
       </div>
       <StatusBar entries={controller.entries} scanning={controller.scanning} />
       {snoozeTarget !== null && (
