@@ -247,6 +247,24 @@ describe('reading-pane conversation', () => {
     expect(conversation()).toHaveTextContent('Conversation unavailable: transcript not found');
   });
 
+  it('shows a row whose id circus could not pass to rl as unavailable, and its neighbours', async () => {
+    await renderInbox();
+    await advance();
+    const call = held[0];
+    await act(async () => {
+      const full = tailsFor(makeList(ROWS), call?.ids ?? []);
+      call?.reply.resolve({ ...full, items: full.items.filter((item) => item.id !== id(0)) });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(conversation()).toHaveTextContent(
+      'Conversation unavailable: circus cannot pass this session id to rl',
+    );
+    expect(screen.queryByText(/May be out of date/)).toBeNull();
+    press('KeyJ');
+    expect(transcript()).toBe(`tail of ${id(1)}`);
+  });
+
   it('names the export command for a truncated tail', async () => {
     await renderInbox();
     await advance();
@@ -257,7 +275,7 @@ describe('reading-pane conversation', () => {
     });
 
     expect(conversation()).toHaveTextContent(
-      'Showing the last 50 KB — rl data export r0 writes the whole conversation',
+      'Showing the last 50,000 characters — rl data export r0 writes the whole conversation',
     );
   });
 

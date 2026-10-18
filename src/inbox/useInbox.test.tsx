@@ -59,7 +59,6 @@ describe('useInbox loading', () => {
     const api = createFakeApi(makeList([rowA, rowB]));
     const { result } = await mountInbox(api);
     expect(methods(api)).toEqual(['cachedList', 'appInfo', 'list', 'scan', 'list']);
-    expect(result.current.scanCount).toBe(1);
     expect(result.current.info).toEqual(NATIVE_INFO);
     expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id]);
     expect(result.current.scanning).toBe(false);
@@ -147,7 +146,31 @@ describe('useInbox loading', () => {
     });
     await flush();
     expect(api.count('scan')).toBe(2);
-    expect(result.current.scanCount).toBe(2);
+    expect(api.count('list')).toBe(3);
+  });
+
+  it('warns once per set of unavailable sources', async () => {
+    const api = createFakeApi(makeList([rowA]));
+    const scan = (sources: string[]) => ({
+      version: 1 as const,
+      kind: 'scan' as const,
+      scanned_at: '',
+      added: 0,
+      removed: 0,
+      unavailable_sources: sources,
+    });
+    api.reply('scan', scan(['codex', 'pi']));
+    api.reply('scan', scan(['codex', 'pi']));
+    api.reply('scan', scan(['codex']));
+    const { result } = await mountInbox(api);
+    const warnings = () => texts(result).filter((t) => t.startsWith('Sources unavailable'));
+    expect(warnings()).toEqual(['Sources unavailable: codex, pi']);
+    act(() => result.current.rescan());
+    await flush();
+    expect(warnings()).toEqual(['Sources unavailable: codex, pi']);
+    act(() => result.current.rescan());
+    await flush();
+    expect(warnings()).toEqual(['Sources unavailable: codex, pi', 'Sources unavailable: codex']);
   });
 
   it('shows a warning when a scan fails and keeps the list', async () => {
@@ -449,13 +472,29 @@ describe('useInbox close flow', () => {
     const api = createFakeApi(makeList([rowA]));
     const { result } = await mountInbox(api);
     api.fail('exit', circusError('failed', 'exit denied'));
-    act(() => api.emitCloseRequested());
+    act(() => api.emitCloseRequested(450_000));
     await flush();
     expect(texts(result)).toContain('Could not quit: exit denied');
     expect(result.current.closing).toBe(false);
+    expect(result.current.finishBy).toBeNull();
+    expect(methods(api).slice(-2)).toEqual(['exit', 'closeCancel']);
     act(() => api.emitCloseRequested());
     await flush();
     expect(api.count('exit')).toBe(2);
+    expect(api.count('closeCancel')).toBe(1);
+  });
+
+  it('keeps the forced-quit time Rust reports while finishing', async () => {
+    const api = createFakeApi(makeList([rowA]));
+    const { result } = await mountInbox(api);
+    api.defer('decide');
+    act(() => {
+      result.current.decide('archive', rowA);
+    });
+    act(() => api.emitCloseRequested(450_000));
+    await flush();
+    expect(result.current.finishBy).toBe(Date.now() + 450_000);
+    expect(api.count('closeCancel')).toBe(0);
   });
   it('reports the pending count once the close listener is registered', async () => {
     const api = createFakeApi(makeList([rowA]));
@@ -574,6 +613,11 @@ describe('settleEffects', () => {
       'error',
       { kind: 'error', decision, error: circusError('invalid_argument') } as Settled,
       [false, false, false],
+    ],
+    [
+      'rl error document',
+      { kind: 'failed', decision, error: circusError('rl_error') } as Settled,
+      [false, true, false],
     ],
   ])('%s → markApplied, refetch, rescan', (_name, input, expected) => {
     const effects = settleEffects(input);

@@ -1,6 +1,7 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
 import {
+  TAIL_CHARS,
   TAIL_MAX_IDS,
   toCircusError,
   type AppInfo,
@@ -13,7 +14,6 @@ import {
   type TailsResponse,
 } from './types';
 
-export const TAIL_CHARS = 50_000;
 const CLOSE_REQUESTED_EVENT = 'circus://close-requested';
 
 const TEXT_DECODER = new TextDecoder();
@@ -49,15 +49,23 @@ export interface CircusApi {
   appInfo(): Promise<AppInfo>;
   setPending(count: number): Promise<void>;
   closeAck(): Promise<void>;
+  closeCancel(): Promise<void>;
   exit(): Promise<void>;
-  onCloseRequested(handler: () => void): Promise<() => void>;
+  onCloseRequested(handler: (finishInMs: number | null) => void): Promise<() => void>;
 }
 
 export type InvokeFn = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
-export type ListenFn = (event: string, handler: () => void) => Promise<() => void>;
+export type ListenFn = (event: string, handler: (payload: unknown) => void) => Promise<() => void>;
 
 const defaultInvoke: InvokeFn = (command, args) => tauriInvoke(command, args);
-const defaultListen: ListenFn = (event, handler) => tauriListen(event, () => handler());
+const defaultListen: ListenFn = (event, handler) =>
+  tauriListen(event, (received) => handler(received.payload));
+
+export function finishInMs(payload: unknown): number | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const value = (payload as Record<string, unknown>).finish_in_ms;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
 
 export function createCircusApi(
   invoke: InvokeFn = defaultInvoke,
@@ -106,12 +114,15 @@ export function createCircusApi(
     closeAck: async () => {
       await call('close_ack', {});
     },
+    closeCancel: async () => {
+      await call('close_cancel', {});
+    },
     exit: async () => {
       await call('app_exit', {});
     },
     onCloseRequested: async (handler) => {
       try {
-        return await listen(CLOSE_REQUESTED_EVENT, handler);
+        return await listen(CLOSE_REQUESTED_EVENT, (payload) => handler(finishInMs(payload)));
       } catch (error) {
         throw toCircusError(error);
       }

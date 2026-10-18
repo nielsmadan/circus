@@ -3,7 +3,7 @@ import type { CircusApi } from '../api/client';
 import type { CircusError, SessionRow, TailItem, TailsResponse } from '../api/types';
 import { createFlight, type Flight, type Landed } from './coalesce';
 import { hasSelectMark, markPane } from './perfMarks';
-import { prefetchIds, TailLru } from './tails';
+import { missingTails, prefetchIds, TailLru } from './tails';
 
 interface Batch {
   readonly ids: readonly string[];
@@ -104,10 +104,16 @@ export function useTails(
         if (landed.result.ok) {
           const { response } = landed.result.value;
           if (response === null) return;
-          response.items.forEach((item) => {
+          const rowOf = (id: string) => {
+            const at = positionsRef.current.get(id);
+            return at === undefined ? undefined : shownRef.current[at];
+          };
+          const requested = landed.result.value.ids
+            .map(rowOf)
+            .filter((row): row is SessionRow => row !== undefined);
+          [...response.items, ...missingTails(requested, response.items)].forEach((item) => {
             lru.put(item);
-            const at = positionsRef.current.get(item.id);
-            const row = at === undefined ? undefined : shownRef.current[at];
+            const row = rowOf(item.id);
             if (row !== undefined && lru.peek(row) === undefined)
               orphans.current.set(item.id, item);
             else orphans.current.delete(item.id);

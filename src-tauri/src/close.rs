@@ -31,12 +31,20 @@ pub fn close_effects(action: CloseAction) -> CloseEffects {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Watch {
+    Wait,
+    Exit,
+    Stop,
+}
+
 #[derive(Debug, Default)]
 pub struct CloseGate {
     pending: u32,
     closing_since: Option<Instant>,
     acked: bool,
     exiting: bool,
+    round: u64,
 }
 
 impl CloseGate {
@@ -55,6 +63,7 @@ impl CloseGate {
             }
             None => {
                 self.closing_since = Some(now);
+                self.round += 1;
                 CloseAction::Notify { first: true }
             }
             Some(_) => CloseAction::Notify { first: false },
@@ -63,6 +72,34 @@ impl CloseGate {
 
     pub fn ack(&mut self) {
         self.acked = true;
+    }
+
+    pub fn cancel(&mut self) {
+        if !self.exiting {
+            self.closing_since = None;
+            self.acked = false;
+        }
+    }
+
+    pub fn round(&self) -> u64 {
+        self.round
+    }
+
+    pub fn finish_in(&self, now: Instant) -> Duration {
+        self.closing_since.map_or(FINISH_TIMEOUT, |since| {
+            FINISH_TIMEOUT.saturating_sub(now.saturating_duration_since(since))
+        })
+    }
+
+    pub fn watch(&mut self, now: Instant, round: u64) -> Watch {
+        if self.exiting || self.round != round || self.closing_since.is_none() {
+            return Watch::Stop;
+        }
+        if self.fallback_due(now) && self.begin_exit() {
+            Watch::Exit
+        } else {
+            Watch::Wait
+        }
     }
 
     pub fn begin_exit(&mut self) -> bool {
@@ -159,6 +196,68 @@ mod tests {
         let mut gate = CloseGate::default();
         assert!(gate.begin_exit());
         assert!(!gate.begin_exit());
+    }
+
+    #[test]
+    fn a_cancelled_close_never_falls_back() {
+        let start = Instant::now();
+        let mut gate = closing_gate(start);
+        gate.ack();
+        let round = gate.round();
+        gate.cancel();
+        assert!(!gate.fallback_due(start + FINISH_TIMEOUT));
+        assert_eq!(gate.watch(start + FINISH_TIMEOUT, round), Watch::Stop);
+    }
+
+    #[test]
+    fn a_close_after_a_cancel_starts_a_new_round_and_deadline() {
+        let start = Instant::now();
+        let mut gate = closing_gate(start);
+        let first_round = gate.round();
+        gate.cancel();
+        let later = start + Duration::from_secs(400);
+        assert_eq!(gate.request(later), CloseAction::Notify { first: true });
+        gate.ack();
+        assert_eq!(gate.watch(start + FINISH_TIMEOUT, first_round), Watch::Stop);
+        assert_eq!(
+            gate.watch(start + FINISH_TIMEOUT, gate.round()),
+            Watch::Wait
+        );
+        assert_eq!(gate.finish_in(later), FINISH_TIMEOUT);
+        assert_eq!(
+            gate.watch(later + FINISH_TIMEOUT, gate.round()),
+            Watch::Exit
+        );
+    }
+
+    #[test]
+    fn the_watch_exits_once_when_due() {
+        let start = Instant::now();
+        let mut gate = closing_gate(start);
+        let round = gate.round();
+        assert_eq!(gate.watch(start, round), Watch::Wait);
+        assert_eq!(gate.watch(start + ACK_TIMEOUT, round), Watch::Exit);
+        assert_eq!(gate.watch(start + ACK_TIMEOUT, round), Watch::Stop);
+    }
+
+    #[test]
+    fn finish_in_counts_down_from_the_first_request() {
+        let start = Instant::now();
+        let mut gate = closing_gate(start);
+        assert_eq!(gate.finish_in(start), FINISH_TIMEOUT);
+        let again = start + Duration::from_secs(100);
+        assert_eq!(gate.request(again), CloseAction::Notify { first: false });
+        assert_eq!(gate.finish_in(again), Duration::from_secs(350));
+        assert_eq!(gate.finish_in(start + FINISH_TIMEOUT * 2), Duration::ZERO);
+    }
+
+    #[test]
+    fn cancel_after_begin_exit_keeps_exiting() {
+        let start = Instant::now();
+        let mut gate = closing_gate(start);
+        assert!(gate.begin_exit());
+        gate.cancel();
+        assert_eq!(gate.request(start), CloseAction::Allow);
     }
 
     #[test]

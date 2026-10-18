@@ -22,6 +22,14 @@ pub struct ProcessSpec {
     pub path_env: Option<String>,
     pub extra_env: Vec<(String, String)>,
     pub timeout: Duration,
+    pub on_deadline: OnDeadline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnDeadline {
+    Terminate,
+    Kill,
+    Detach,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +44,7 @@ pub enum RunError {
     NotFound,
     Timeout,
     OutputTooLarge,
+    Detached,
     Io(String),
 }
 
@@ -70,11 +79,13 @@ impl ProcessRunner for SystemRunner {
         let program =
             resolve_program(&spec.program, search_path.as_deref()).ok_or(RunError::NotFound)?;
         let mut command = Command::new(program);
-        command
-            .args(&spec.args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        command.args(&spec.args).stdin(Stdio::null());
+        // a detached child outlives circus, so it must not hold pipes into it
+        if spec.on_deadline == OnDeadline::Detach {
+            command.stdout(Stdio::null()).stderr(Stdio::null());
+        } else {
+            command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        }
         // a new session (not just a group) keeps an interactive shell from stopping on the controlling tty
         unsafe {
             command.pre_exec(|| {
@@ -107,12 +118,24 @@ impl ProcessRunner for SystemRunner {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
                 Ok(None) if Instant::now() >= deadline => {
-                    terminate(&mut child, pgid);
-                    return Err(RunError::Timeout);
+                    return Err(match spec.on_deadline {
+                        OnDeadline::Detach => {
+                            reap_later(child);
+                            RunError::Detached
+                        }
+                        OnDeadline::Kill => {
+                            terminate(&mut child, pgid, Duration::ZERO);
+                            RunError::Timeout
+                        }
+                        OnDeadline::Terminate => {
+                            terminate(&mut child, pgid, KILL_GRACE);
+                            RunError::Timeout
+                        }
+                    });
                 }
                 Ok(None) => thread::sleep(POLL_INTERVAL),
                 Err(error) => {
-                    terminate(&mut child, pgid);
+                    terminate(&mut child, pgid, KILL_GRACE);
                     return Err(RunError::Io(error.to_string()));
                 }
             }
@@ -193,17 +216,25 @@ fn signal_group(pgid: libc::pid_t, signal: libc::c_int) {
     let _ = unsafe { libc::killpg(pgid, signal) };
 }
 
-fn terminate(child: &mut Child, pgid: libc::pid_t) {
-    signal_group(pgid, libc::SIGTERM);
-    let grace_end = Instant::now() + KILL_GRACE;
-    while Instant::now() < grace_end {
-        match child.try_wait() {
-            Ok(None) => thread::sleep(POLL_INTERVAL),
-            _ => break,
+fn terminate(child: &mut Child, pgid: libc::pid_t, grace: Duration) {
+    if !grace.is_zero() {
+        signal_group(pgid, libc::SIGTERM);
+        let grace_end = Instant::now() + grace;
+        while Instant::now() < grace_end {
+            match child.try_wait() {
+                Ok(None) => thread::sleep(POLL_INTERVAL),
+                _ => break,
+            }
         }
     }
     signal_group(pgid, libc::SIGKILL);
     let _ = child.wait();
+}
+
+fn reap_later(mut child: Child) {
+    thread::spawn(move || {
+        let _ = child.wait();
+    });
 }
 
 #[cfg(test)]
@@ -217,6 +248,7 @@ mod tests {
             path_env: None,
             extra_env: Vec::new(),
             timeout,
+            on_deadline: OnDeadline::Terminate,
         }
     }
 
@@ -315,6 +347,90 @@ mod tests {
             .expect("pid");
         assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn read_pid(path: &Path) -> libc::pid_t {
+        let gone_by = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(pid) = std::fs::read_to_string(path)
+                .ok()
+                .and_then(|text| text.trim().parse().ok())
+            {
+                return pid;
+            }
+            assert!(Instant::now() < gone_by, "no pid in {}", path.display());
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn a_kill_deadline_does_not_wait_out_the_grace() {
+        let dir = temp_dir("kill");
+        let pid_file = dir.join("pid");
+        let script = format!(
+            "trap '' TERM; echo $$ > '{}'; i=0; while [ $i -lt 15 ]; do sleep 1; i=$((i+1)); done",
+            pid_file.to_string_lossy()
+        );
+        let mut killed = spec("/bin/sh", &["-c", &script], Duration::from_secs(1));
+        killed.on_deadline = OnDeadline::Kill;
+        let started = Instant::now();
+        let result = SystemRunner.run(&killed);
+        let elapsed = started.elapsed();
+        assert_eq!(result, Err(RunError::Timeout));
+        assert!(elapsed < Duration::from_secs(3), "{elapsed:?}");
+        assert_eq!(unsafe { libc::kill(read_pid(&pid_file), 0) }, -1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_detach_deadline_leaves_the_child_running() {
+        let dir = temp_dir("detach");
+        let pid_file = dir.join("pid");
+        let script = format!("echo $$ > '{}'; sleep 30", pid_file.to_string_lossy());
+        let mut detached = spec("/bin/sh", &["-c", &script], Duration::from_secs(1));
+        detached.on_deadline = OnDeadline::Detach;
+        let started = Instant::now();
+        let result = SystemRunner.run(&detached);
+        let elapsed = started.elapsed();
+        let pid = read_pid(&pid_file);
+        let alive = unsafe { libc::kill(pid, 0) };
+        unsafe { libc::killpg(pid, libc::SIGKILL) };
+        assert_eq!(result, Err(RunError::Detached));
+        assert!(elapsed < Duration::from_secs(3), "{elapsed:?}");
+        assert_eq!(alive, 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_detached_child_has_no_pipes_into_circus() {
+        let dir = temp_dir("detach-pipes");
+        let kinds = dir.join("kinds");
+        let pid_file = dir.join("pid");
+        let script = format!(
+            "for fd in 1 2; do if [ -p /dev/fd/$fd ]; then echo pipe; else echo other; fi; done > '{}'; echo $$ > '{}'; sleep 30",
+            kinds.to_string_lossy(),
+            pid_file.to_string_lossy()
+        );
+        let mut detached = spec("/bin/sh", &["-c", &script], Duration::from_secs(1));
+        detached.on_deadline = OnDeadline::Detach;
+        let result = SystemRunner.run(&detached);
+        let pid = read_pid(&pid_file);
+        unsafe { libc::killpg(pid, libc::SIGKILL) };
+        assert_eq!(result, Err(RunError::Detached));
+        assert_eq!(
+            std::fs::read_to_string(&kinds).expect("kinds"),
+            "other\nother\n"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_detached_child_failing_within_the_grace_reports_its_status() {
+        let mut detached = spec("/bin/sh", &["-c", "exit 3"], Duration::from_secs(5));
+        detached.on_deadline = OnDeadline::Detach;
+        let output = SystemRunner.run(&detached).expect("exits in time");
+        assert_eq!(output.exit_code, Some(3));
+        assert!(output.stdout.is_empty());
     }
 
     #[test]

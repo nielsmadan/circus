@@ -161,6 +161,11 @@ pub fn close_ack(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
+pub fn close_cancel(state: State<'_, AppState>) {
+    lock_gate(&state.close).cancel();
+}
+
+#[tauri::command]
 pub fn app_exit(app: AppHandle, state: State<'_, AppState>) {
     // the watchdog thread shares this mutex, so the guard is dropped before exit
     let first = lock_gate(&state.close).begin_exit();

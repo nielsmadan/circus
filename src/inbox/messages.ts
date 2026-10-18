@@ -31,6 +31,10 @@ const PAST: Readonly<Record<DecisionAction, string>> = Object.freeze({
 
 const CHANGED = 'changed since you looked';
 
+export function isChangedRefusal(outcome: DecideOutcome): boolean {
+  return outcome.status === 'refused' && outcome.reason?.startsWith(CHANGED) === true;
+}
+
 export function verb(action: DecisionAction): string {
   return VERBS[action];
 }
@@ -70,9 +74,7 @@ function outcomeToast(decision: Decision, outcome: DecideOutcome): ToastSpec {
     }
     case 'refused':
     case 'failed': {
-      const rescanning =
-        outcome.status === 'refused' && outcome.reason?.startsWith(CHANGED) === true;
-      const suffix = rescanning ? ' — rescanning to pick up the change' : '';
+      const suffix = isChangedRefusal(outcome) ? ' — rescanning to pick up the change' : '';
       return toast('warning', `${outcome.message}${suffix}`, joinDetail(outcome.warnings));
     }
     case 'empty':
@@ -93,6 +95,11 @@ export function settledToast(settled: Settled): ToastSpec {
         'warning',
         `${verb(decision.action)} ${quoted(decision)}: result unknown — refreshing`,
         settled.error.message,
+      );
+    case 'failed':
+      return toast(
+        'warning',
+        `${verb(decision.action)} ${quoted(decision)} failed: ${settled.error.message}`,
       );
     case 'error':
       return toast(

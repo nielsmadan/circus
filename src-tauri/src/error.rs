@@ -7,6 +7,7 @@ pub enum ErrorKind {
     RlTooOld,
     Timeout,
     Failed,
+    RlError,
     BadOutput,
     InvalidArgument,
     Launch,

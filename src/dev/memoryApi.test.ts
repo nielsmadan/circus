@@ -114,6 +114,112 @@ describe('createMemoryApi', () => {
     expect((await keepGoing).status).toBe('ok');
   });
 
+  async function decided(api: ReturnType<typeof createMemoryApi>, req: DecideRequest) {
+    const pending = api.decide(req);
+    await vi.advanceTimersByTimeAsync(2_000);
+    return pending;
+  }
+
+  it('refuses destructive actions on a session that left the registry, and fails the rest', async () => {
+    const api = createMemoryApi(seed, { latencyMs: 10 });
+    const gone = makeRow({ id: 'claude-code:gone', session_id: 'gone' });
+    expect(await decided(api, request(gone))).toMatchObject({
+      status: 'refused',
+      reason: 'no longer in the registry',
+      message: 'claude-code:gone: no longer in the registry',
+    });
+    expect(await decided(api, request(gone, { action: 'harvest' }))).toMatchObject({
+      status: 'refused',
+      reason: 'no longer in the registry',
+      message: 'no longer in the registry',
+    });
+    expect(await decided(api, request(gone, { action: 'keep' }))).toMatchObject({
+      status: 'failed',
+      reason: null,
+      message: 'claude-code:gone: no longer in the registry',
+    });
+  });
+
+  it.each([null, 'fp-1', '1:2:3:4'])(
+    'refuses a destructive action with fingerprint %s before reading the registry',
+    async (fingerprint) => {
+      const api = createMemoryApi(seed, { latencyMs: 10 });
+      const gone = makeRow({ id: 'claude-code:gone' });
+      for (const action of ['archive', 'delete', 'harvest'] as const) {
+        expect(await decided(api, request(gone, { action, fingerprint }))).toMatchObject({
+          status: 'refused',
+          reason: 'changed since you looked: no fingerprint, rescan',
+        });
+      }
+    },
+  );
+
+  it('refuses a lifecycle-blocked row first, naming the action', async () => {
+    const blocked = makeRow({
+      id: 'opencode:b',
+      label: 'blocked',
+      running: true,
+      lifecycle_block:
+        'cannot archive opencode session b: the source has no filesystem transcript lifecycle',
+    });
+    const api = createMemoryApi(makeList([blocked]), { latencyMs: 10 });
+    for (const action of ['archive', 'delete', 'harvest'] as const) {
+      expect(
+        await decided(api, request(blocked, { action, mtime: '2026-01-01T00:00:00+00:00' })),
+      ).toMatchObject({
+        status: 'refused',
+        reason: `cannot ${action} opencode session b: the source has no filesystem transcript lifecycle`,
+      });
+    }
+  });
+
+  it('refuses a changed row before a running one', async () => {
+    const running = makeRow({ id: 'claude-code:r', label: 'busy', running: true });
+    const api = createMemoryApi(makeList([running]), { latencyMs: 10 });
+    const stale = { mtime: '2026-01-01T00:00:00+00:00' };
+    expect(await decided(api, request(running, stale))).toMatchObject({
+      status: 'refused',
+      reason: 'changed since you looked',
+      message: 'busy: changed since you looked',
+    });
+    expect(await decided(api, request(running, { ...stale, action: 'harvest' }))).toMatchObject({
+      reason: 'changed since you looked',
+      message: 'changed since you looked',
+    });
+  });
+
+  it('treats unknown presence as running', async () => {
+    const unknown = makeRow({ id: 'claude-code:u', label: 'unsure', running: null });
+    const api = createMemoryApi(makeList([unknown]), { latencyMs: 10 });
+    expect(await decided(api, request(unknown, { action: 'delete' }))).toMatchObject({
+      status: 'refused',
+      reason:
+        "can't tell whether unsure is running — install presence with rl data presence install",
+    });
+  });
+
+  it.each([
+    ['2026-13-45T99:99:99+00:00', "--until is not an ISO 8601 time: '2026-13-45T99:99:99+00:00'"],
+    ['2026-10-20T09:00:00', '--until needs a timezone offset'],
+    ['2026-10-01T09:00:00+00:00', 'snooze time must be in the future'],
+  ])('refuses a snooze until %s', async (until, reason) => {
+    const api = createMemoryApi(seed, { latencyMs: 10 });
+    expect(await decided(api, request(rowA, { action: 'snooze', until }))).toMatchObject({
+      status: 'refused',
+      reason,
+    });
+  });
+
+  it('rejects a snooze without until as Rust does, and snoozes a future one', async () => {
+    const api = createMemoryApi(seed, { latencyMs: 10 });
+    await expect(
+      api.decide(request(rowA, { action: 'snooze', until: null })),
+    ).rejects.toMatchObject({ kind: 'invalid_argument' });
+    expect(
+      await decided(api, request(rowA, { action: 'snooze', until: '2026-10-20T07:00:00.000Z' })),
+    ).toMatchObject({ status: 'ok' });
+  });
+
   it('invokes the registered close handler on requestClose', async () => {
     const api = createMemoryApi(seed, { latencyMs: 10 });
     const handler = vi.fn();
@@ -121,6 +227,6 @@ describe('createMemoryApi', () => {
     await vi.advanceTimersByTimeAsync(10);
     await registered;
     api.requestClose();
-    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls).toEqual([[450_000]]);
   });
 });

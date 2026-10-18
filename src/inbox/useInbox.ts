@@ -21,7 +21,13 @@ import {
 import { adoptList, markApplied, type Applied } from './applied';
 import { createFlight, type Flight, type Landed } from './coalesce';
 import { clientRefusal, decisionGuard, visibleSessions } from './derive';
-import { enqueuedToast, settledToast, undoToast, type ToastSpec } from './messages';
+import {
+  enqueuedToast,
+  isChangedRefusal,
+  settledToast,
+  undoToast,
+  type ToastSpec,
+} from './messages';
 import {
   Outbox,
   toRequest,
@@ -50,10 +56,10 @@ export interface InboxController {
   readonly listStale: boolean;
   readonly loadError: CircusError | null;
   readonly scanning: boolean;
-  readonly scanCount: number;
   readonly rows: readonly SessionRow[];
   readonly entries: readonly OutboxEntry[];
   readonly closing: boolean;
+  readonly finishBy: number | null;
   readonly toasts: readonly Toast[];
   readonly decisionsBlocked: string | null;
   decide(action: DecisionAction, row: SessionRow, until?: string | null): boolean;
@@ -72,7 +78,6 @@ export interface SettleEffects {
   readonly toast: ToastSpec;
 }
 
-const CHANGED = 'changed since you looked';
 const TOAST_MS: Readonly<Record<ToastSpec['tone'], number>> = {
   info: 6_000,
   warning: 10_000,
@@ -107,15 +112,21 @@ export function settleEffects(settled: Settled): SettleEffects {
   switch (settled.kind) {
     case 'unknown':
       return { markApplied: true, refetch: true, rescan: false, toast };
+    case 'failed':
+      return { markApplied: false, refetch: true, rescan: false, toast };
     case 'error':
       return { markApplied: false, refetch: false, rescan: false, toast };
     case 'outcome': {
-      const { status, wrote, reason } = settled.outcome;
+      const { status, wrote } = settled.outcome;
       if (status === 'ok' || wrote)
         return { markApplied: true, refetch: true, rescan: false, toast };
       if (status === 'empty') return { markApplied: false, refetch: false, rescan: false, toast };
-      const rescan = status === 'refused' && reason?.startsWith(CHANGED) === true;
-      return { markApplied: false, refetch: true, rescan, toast };
+      return {
+        markApplied: false,
+        refetch: true,
+        rescan: isChangedRefusal(settled.outcome),
+        toast,
+      };
     }
   }
 }
@@ -182,12 +193,13 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
   const [applied, setApplied] = useState<Applied>(() => new Map());
   const [toasts, setToasts] = useState<readonly Toast[]>([]);
   const [scanning, setScanning] = useState(false);
-  const [scanCount, setScanCount] = useState(0);
+  const [finishBy, setFinishBy] = useState<number | null>(null);
   const [listenerReady, setListenerReady] = useState(false);
 
   const handlers = useRef<Handlers>(IDLE_HANDLERS);
   const lastSent = useRef<Decision | null>(null);
   const liveLanded = useRef(false);
+  const warnedSources = useRef('');
   const lastListLandedAt = useRef<number | null>(null);
   const started = useRef(false);
   const closingRef = useRef(false);
@@ -274,7 +286,19 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
           });
           return;
         }
-        setScanCount((n) => n + 1);
+        const unavailable = landed.result.value.unavailable_sources;
+        const key = unavailable.join('\n');
+        if (key !== warnedSources.current) {
+          warnedSources.current = key;
+          if (unavailable.length > 0) {
+            pushToast({
+              tone: 'warning',
+              text: `Sources unavailable: ${unavailable.join(', ')}`,
+              undo: false,
+              detail: null,
+            });
+          }
+        }
         listFlight.request(undefined);
       },
       onScanStarted() {
@@ -305,8 +329,9 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
   useEffect(() => {
     let active = true;
     let unlisten: (() => void) | null = null;
-    const handleClose = async () => {
+    const handleClose = async (finishInMs: number | null) => {
       api.closeAck().catch(reportError);
+      setFinishBy(finishInMs === null ? null : clockRef.current.now() + finishInMs);
       if (closingRef.current) return;
       closingRef.current = true;
       outbox.flush();
@@ -314,7 +339,9 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
       try {
         await api.exit();
       } catch (error) {
+        await api.closeCancel().catch(reportError);
         closingRef.current = false;
+        setFinishBy(null);
         outbox.reopen();
         pushToast({
           tone: 'error',
@@ -325,8 +352,8 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
       }
     };
     api
-      .onCloseRequested(() => {
-        handleClose().catch(reportError);
+      .onCloseRequested((finishInMs) => {
+        handleClose(finishInMs).catch(reportError);
       })
       .then((remove) => {
         if (!active) {
@@ -438,10 +465,10 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
       listStale,
       loadError,
       scanning,
-      scanCount,
       rows,
       entries,
       closing,
+      finishBy,
       toasts,
       decisionsBlocked,
       decide,
@@ -458,10 +485,10 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
       listStale,
       loadError,
       scanning,
-      scanCount,
       rows,
       entries,
       closing,
+      finishBy,
       toasts,
       decisionsBlocked,
       decide,

@@ -27,7 +27,7 @@ impl DecisionAction {
 #[derive(Deserialize, Clone, Debug)]
 pub struct TailsRequest {
     pub ids: Vec<String>,
-    pub max_chars: Option<u32>,
+    pub max_chars: u32,
 }
 
 // serde ignores every other field; responses are never parsed into a JSON value tree
@@ -96,4 +96,9 @@ pub struct AppInfo {
     pub resume_dry_run: bool,
     pub terminal: TerminalKind,
     pub settings_path: String,
+}
+
+#[derive(Serialize, Clone, Copy, Debug)]
+pub struct CloseRequested {
+    pub finish_in_ms: u64,
 }

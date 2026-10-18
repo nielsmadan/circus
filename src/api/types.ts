@@ -1,6 +1,5 @@
-export const CONTRACT_VERSION = 1;
-export const LIST_TEXT_MAX_CHARS = 500;
 export const TAIL_MAX_IDS = 16;
+export const TAIL_CHARS = 50_000;
 
 export type DecisionAction = 'harvest' | 'archive' | 'delete' | 'snooze' | 'keep' | 'keep_going';
 export type OutcomeStatus = 'ok' | 'refused' | 'empty' | 'failed';
@@ -98,12 +97,6 @@ export interface DecideOutcome {
   warnings: string[];
 }
 
-export interface ErrorDocument {
-  version: 1;
-  kind: 'error';
-  message: string;
-}
-
 export const SESSION_ROW_KEYS = [
   'age_days',
   'age_human',
@@ -186,6 +179,7 @@ export type CircusErrorKind =
   | 'rl_too_old'
   | 'timeout'
   | 'failed'
+  | 'rl_error'
   | 'bad_output'
   | 'invalid_argument'
   | 'launch';
@@ -229,6 +223,7 @@ const ERROR_KINDS: ReadonlySet<string> = new Set<CircusErrorKind>([
   'rl_too_old',
   'timeout',
   'failed',
+  'rl_error',
   'bad_output',
   'invalid_argument',
   'launch',

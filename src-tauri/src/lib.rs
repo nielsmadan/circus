@@ -15,9 +15,10 @@ use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 
-use close::{CloseGate, close_effects};
+use close::{CloseGate, Watch, close_effects};
 use commands::{CLOSE_REQUESTED_EVENT, lock_gate};
 use config::{EnvSnapshot, Pending, Resolved, Settings};
+use contract::CloseRequested;
 
 const QUIT_MENU_ID: &str = "quit";
 const WATCHDOG_POLL: Duration = Duration::from_millis(250);
@@ -143,30 +144,40 @@ fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .build()
 }
 
-fn spawn_watchdog(app: AppHandle, gate: Arc<Mutex<CloseGate>>) {
+fn spawn_watchdog(app: AppHandle, gate: Arc<Mutex<CloseGate>>, round: u64) {
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(WATCHDOG_POLL);
-            let exit = {
-                let mut gate = lock_gate(&gate);
-                gate.fallback_due(Instant::now()) && gate.begin_exit()
-            };
-            if exit {
-                app.exit(0);
-                return;
+            // bound by `let` so the guard is dropped before exit
+            let next = lock_gate(&gate).watch(Instant::now(), round);
+            match next {
+                Watch::Wait => {}
+                Watch::Stop => return,
+                Watch::Exit => {
+                    app.exit(0);
+                    return;
+                }
             }
         }
     });
 }
 
 fn on_close_request(app: &AppHandle, gate: &Arc<Mutex<CloseGate>>) -> bool {
-    let action = lock_gate(gate).request(Instant::now());
+    let now = Instant::now();
+    let (action, round, finish_in) = {
+        let mut gate = lock_gate(gate);
+        let action = gate.request(now);
+        (action, gate.round(), gate.finish_in(now))
+    };
     let effects = close_effects(action);
     if effects.spawn_watchdog {
-        spawn_watchdog(app.clone(), Arc::clone(gate));
+        spawn_watchdog(app.clone(), Arc::clone(gate), round);
     }
+    let payload = CloseRequested {
+        finish_in_ms: u64::try_from(finish_in.as_millis()).unwrap_or(u64::MAX),
+    };
     if effects.emit
-        && let Err(error) = app.emit(CLOSE_REQUESTED_EVENT, ())
+        && let Err(error) = app.emit(CLOSE_REQUESTED_EVENT, payload)
     {
         eprintln!("circus: could not emit {CLOSE_REQUESTED_EVENT}: {error}");
     }
@@ -207,6 +218,7 @@ pub fn run() {
             commands::resume_session,
             commands::set_pending,
             commands::close_ack,
+            commands::close_cancel,
             commands::app_exit,
         ])
         .build(tauri::generate_context!())

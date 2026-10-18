@@ -26,6 +26,12 @@ describe('syntheticRows', () => {
     expect(Date.parse(running[0]?.mtime ?? '')).toBe(newest);
   });
 
+  it('carries five-field numeric fingerprints, as ringleader stamps them', () => {
+    syntheticRows(50, NOW).forEach((row) => {
+      expect(row.file_fingerprint).toMatch(/^\d+:\d+:\d+:\d+:\d+$/);
+    });
+  });
+
   it('uses unique ids, every fifth from codex', () => {
     const rows = syntheticRows(50, NOW);
     expect(new Set(rows.map((row) => row.id)).size).toBe(50);

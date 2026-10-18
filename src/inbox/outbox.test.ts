@@ -282,6 +282,7 @@ describe('Outbox', () => {
     ['timeout', 'unknown'],
     ['failed', 'unknown'],
     ['bad_output', 'unknown'],
+    ['rl_error', 'failed'],
     ['invalid_argument', 'error'],
   ] as const)('classifies a rejected %s as %s', async (errorKind, settledKind) => {
     const { clock, sends, settled, enqueue } = setup();

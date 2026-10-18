@@ -136,7 +136,7 @@ function toRow(d: Draft, nowMs: number, running: boolean): SessionRow {
     snoozed_until: d.woke ? isoSeconds(nowMs - DAY_MS) : null,
     kept_at: null,
     finish_on_exit: false,
-    file_fingerprint: `fp-${d.index}`,
+    file_fingerprint: `1:${d.messages}:${d.sizeBytes}:${d.mtimeMs}000000:${d.mtimeMs}000000`,
     running,
     in_recent: ageMs <= RECENT_DAYS * DAY_MS,
     woke: d.woke,

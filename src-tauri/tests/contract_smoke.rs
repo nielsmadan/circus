@@ -57,7 +57,7 @@ fn rl_gui_contract_against_the_sandbox_world() {
     let tails = json(
         &rl.tails(&TailsRequest {
             ids: ids.clone(),
-            max_chars: None,
+            max_chars: 50_000,
         })
         .expect("tails"),
     );

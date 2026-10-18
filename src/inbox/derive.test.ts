@@ -218,7 +218,22 @@ describe('clientRefusal', () => {
     expect(clientRefusal('keep_going', makeRow({ running: true }))).toBeNull();
   });
 
-  it('returns the lifecycle block text', () => {
+  it.each(['archive', 'harvest'] as const)('returns the lifecycle block text for %s', (action) => {
+    expect(clientRefusal(action, makeRow({ lifecycle_block: 'not a plain file' }))).toBe(
+      'not a plain file',
+    );
+  });
+
+  it('refuses a lifecycle-blocked delete, naming delete', () => {
+    expect(
+      clientRefusal(
+        'delete',
+        makeRow({ lifecycle_block: 'cannot archive x: no filesystem transcript lifecycle' }),
+      ),
+    ).toBe('cannot delete x: no filesystem transcript lifecycle');
+  });
+
+  it('refuses a lifecycle-blocked delete with other text as given', () => {
     expect(clientRefusal('delete', makeRow({ lifecycle_block: 'not a plain file' }))).toBe(
       'not a plain file',
     );

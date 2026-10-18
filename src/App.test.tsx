@@ -93,8 +93,11 @@ describe('App shell', () => {
       controller().decide('archive', rowA);
       controller().decide('keep', rowB);
     });
-    await act(async () => api.emitCloseRequested());
-    expect(screen.getByRole('alertdialog', { name: 'Finishing 2 changes…' })).toBeInTheDocument();
+    await act(async () => api.emitCloseRequested(450_000));
+    const overlay = screen.getByRole('alertdialog', { name: 'Finishing 2 changes…' });
+    expect(overlay).toHaveTextContent(
+      /Circus quits at \d\d:\d\d:\d\d.* even if work remains\. 1 change not sent by then is dropped and will be back on the next launch\. Changes already being sent finish in the background\./,
+    );
     await userEvent.click(screen.getByRole('button', { name: 'Discard unsent (1)' }));
     expect(screen.getByRole('alertdialog', { name: 'Finishing 1 change…' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Discard unsent/ })).toBeNull();

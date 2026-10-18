@@ -10,6 +10,7 @@ fn main() {
             "resume_session",
             "set_pending",
             "close_ack",
+            "close_cancel",
             "app_exit",
         ]),
     ))

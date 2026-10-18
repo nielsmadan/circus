@@ -200,6 +200,13 @@ export function nextSelection(
 
 const GUARDED_ACTIONS: ReadonlySet<DecisionAction> = new Set(['archive', 'delete', 'harvest']);
 
+// a non-null block fails the same transcript check for delete, so ringleader refuses it too
+function lifecycleText(block: string, action: DecisionAction): string {
+  return action === 'delete' && block.startsWith('cannot archive ')
+    ? `cannot delete ${block.slice('cannot archive '.length)}`
+    : block;
+}
+
 export function clientRefusal(action: DecisionAction, row: SessionRow): string | null {
   if (!GUARDED_ACTIONS.has(action)) return null;
   if (row.running === true) {
@@ -208,7 +215,7 @@ export function clientRefusal(action: DecisionAction, row: SessionRow): string |
   if (row.running === null) {
     return `Can't tell whether ${row.label} is running — archive, delete and harvest are refused until presence works`;
   }
-  if (row.lifecycle_block) return row.lifecycle_block;
+  if (row.lifecycle_block) return lifecycleText(row.lifecycle_block, action);
   if (row.file_fingerprint === null) {
     return `${row.label} has no fingerprint — rescan first (⌘K › Rescan sessions)`;
   }

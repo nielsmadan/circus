@@ -48,8 +48,8 @@ function Transcript({
     <div className="flex min-h-0 flex-col gap-2">
       {item.truncated && (
         <p className="text-xs opacity-70">
-          Showing the last 50 KB — <code>rl data export {sessionId}</code> writes the whole
-          conversation
+          Showing the last {item.max_chars.toLocaleString('en-US')} characters —{' '}
+          <code>rl data export {sessionId}</code> writes the whole conversation
         </p>
       )}
       <div

@@ -25,10 +25,12 @@ The world is rebuilt on every launch, so a sandbox launch starts without a list 
 
 `pnpm dev:fake` serves the whole Inbox in a plain browser over the in-memory API in `src/dev/memoryApi.ts`: list, reading pane, all six decisions with undo, snooze dialog, dry-run resume toast, ⌘K palette. No Tauri, no `rl`. It is what agent-browser drives.
 
+The fake decides as `rl gui decide` does, so QA in the harness sees real outcomes: archive, delete and harvest are refused without a five-field numeric fingerprint (the synthetic rows carry real-shaped ones), then for a lifecycle block (`cannot <action> …`), a session that left the registry or a changed `mtime`, then for a running or presence-unknown session, in that order; keep and keep going on a missing session are `failed`; a snooze without `until` is rejected as `invalid_argument` the way Rust rejects it, and an unparsable, offset-less or past `until` is refused.
+
 - `VITE_FAKE_ROWS` — synthetic row count (default 2000)
 - `VITE_FAKE_LATENCY_MS` — simulated latency per call (default 150)
 - `VITE_FAKE_CACHE=0` — start without a cached list (default: a cache is available, so the first paint comes from it)
-- `window.circusFake.requestClose()` — simulate a window close request to see the "Finishing N changes…" overlay with a pending decision
+- `window.circusFake.requestClose()` — simulate a window close request (with 450 s left) to see the "Finishing N changes…" overlay with a pending decision
 
 Example: `VITE_FAKE_ROWS=5000 VITE_FAKE_LATENCY_MS=0 pnpm dev:fake`.
 

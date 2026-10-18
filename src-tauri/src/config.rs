@@ -5,7 +5,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use crate::contract::{RlSource, ShellProbeState};
-use crate::process::{ProcessRunner, ProcessSpec, RunError};
+use crate::process::{OnDeadline, ProcessRunner, ProcessSpec, RunError};
 
 pub const SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SHELL_PROBE_SCRIPT: &str = r#"printf '\n__CIRCUS_PATH__%s__CIRCUS_END__\n' "$PATH"; printf '__CIRCUS_RL__%s__CIRCUS_END__\n' "$(command -v rl 2>/dev/null)"; exit 0"#;
@@ -51,6 +51,8 @@ pub fn shell_probe_spec(shell: Option<&str>) -> ProcessSpec {
         path_env: None,
         extra_env: vec![("DISABLE_AUTO_UPDATE".to_string(), "true".to_string())],
         timeout: SHELL_PROBE_TIMEOUT,
+        // interactive shells ignore SIGTERM, and nothing in the probe needs reaping
+        on_deadline: OnDeadline::Kill,
     }
 }
 
@@ -164,7 +166,8 @@ pub fn resolve<R: ProcessRunner>(
         && env
             .circus_rl
             .as_deref()
-            .is_some_and(|value| shlex::split(value).is_none_or(|words| words.is_empty()));
+            .and_then(shlex::split)
+            .is_none_or(|words| words.is_empty());
     if env_rl_unusable {
         return Resolved {
             command: vec![UNRESOLVED_SANDBOX_RL.to_string()],
@@ -316,6 +319,7 @@ mod tests {
         assert_eq!(spec.program, "/bin/zsh");
         assert_eq!(spec.args, strings(&["-ilc", SHELL_PROBE_SCRIPT]));
         assert_eq!(spec.timeout, Duration::from_secs(5));
+        assert_eq!(spec.on_deadline, OnDeadline::Kill);
         assert_eq!(
             spec.extra_env,
             vec![("DISABLE_AUTO_UPDATE".to_string(), "true".to_string())]
@@ -407,6 +411,26 @@ mod tests {
 
         let unlabelled = resolve(&runner, &env(Some("'unterminated")), &settings, &|_| true);
         assert_eq!(unlabelled.source, RlSource::Settings);
+    }
+
+    #[test]
+    fn missing_circus_rl_in_a_labelled_environment_is_missing() {
+        let runner = FakeRunner::new(Err(RunError::Timeout));
+        let mut labelled = env(None);
+        labelled.env_label = Some("sandbox".to_string());
+        let settings = Settings {
+            rl_command: Some(strings(&["/opt/rl"])),
+            terminal_command: None,
+        };
+        let resolved = resolve(&runner, &labelled, &settings, &|_| true);
+        assert_eq!(resolved.source, RlSource::Missing);
+        assert_eq!(resolved.command, strings(&[UNRESOLVED_SANDBOX_RL]));
+        assert_eq!(resolved.probe, ShellProbeState::Skipped);
+        assert!(runner.specs.lock().expect("specs").is_empty());
+
+        labelled.circus_rl = Some("   ".to_string());
+        let blank = resolve(&runner, &labelled, &settings, &|_| true);
+        assert_eq!(blank.command, strings(&[UNRESOLVED_SANDBOX_RL]));
     }
 
     #[test]

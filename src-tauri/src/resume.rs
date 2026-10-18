@@ -2,10 +2,11 @@ use std::time::Duration;
 
 use crate::contract::{ResumeLaunch, TerminalKind};
 use crate::error::{CircusError, ErrorKind};
-use crate::process::{ProcessOutput, ProcessRunner, ProcessSpec, RunError};
+use crate::process::{OnDeadline, ProcessOutput, ProcessRunner, ProcessSpec, RunError};
 use crate::rl;
 
 pub const RESUME_LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
+pub const CUSTOM_LAUNCH_GRACE: Duration = Duration::from_secs(5);
 const OSASCRIPT: &str = "/usr/bin/osascript";
 const COMMAND_PLACEHOLDER: &str = "{command}";
 const NOT_AUTHORIZED: &str = "Circus isn't allowed to control iTerm2. Allow it in System Settings › Privacy & Security › Automation, then resume again.";
@@ -54,22 +55,24 @@ pub fn launch_spec(
             (program.clone(), args.to_vec(), TerminalKind::Custom)
         }
     };
+    // a custom launcher may be the terminal itself, which stays in the foreground until its window closes
+    let (timeout, on_deadline) = match via {
+        TerminalKind::Iterm2 => (RESUME_LAUNCH_TIMEOUT, OnDeadline::Terminate),
+        TerminalKind::Custom => (CUSTOM_LAUNCH_GRACE, OnDeadline::Detach),
+    };
     let spec = ProcessSpec {
         program,
         args,
         path_env: None,
         extra_env: Vec::new(),
-        timeout: RESUME_LAUNCH_TIMEOUT,
+        timeout,
+        on_deadline,
     };
     Ok((spec, via))
 }
 
 fn launch_failure(message: impl Into<String>) -> CircusError {
     CircusError::new(ErrorKind::Launch, message)
-}
-
-pub fn launch_error(result: Result<ProcessOutput, RunError>) -> Option<CircusError> {
-    classify_launch(result, TerminalKind::Iterm2, "")
 }
 
 fn classify_launch(
@@ -79,6 +82,7 @@ fn classify_launch(
 ) -> Option<CircusError> {
     match result {
         Ok(output) if output.exit_code == Some(0) => None,
+        Err(RunError::Detached) => None,
         Ok(output)
             if via == TerminalKind::Iterm2
                 && (output.stderr.contains("(-1743)")
@@ -100,7 +104,10 @@ fn classify_launch(
                 stderr_tail: (!tail.is_empty()).then_some(tail),
             })
         }
-        Err(RunError::Timeout) => Some(launch_failure(NO_RESPONSE)),
+        Err(RunError::Timeout) if via == TerminalKind::Iterm2 => Some(launch_failure(NO_RESPONSE)),
+        Err(RunError::Timeout) => Some(launch_failure(format!(
+            "The terminal launcher {program:?} did not respond in time."
+        ))),
         Err(RunError::NotFound) if via == TerminalKind::Custom => Some(launch_failure(format!(
             "The terminal launcher {program:?} was not found. Use an absolute path in terminal_command in settings.json."
         ))),
@@ -259,8 +266,69 @@ mod tests {
         let (spec, via) = launch_spec(Some(&template), "rl resume x:y").expect("spec");
         assert_eq!(spec.program, "/usr/bin/open");
         assert_eq!(spec.args, strings(&["-a", "Terminal", "rl resume x:y"]));
-        assert_eq!(spec.timeout, RESUME_LAUNCH_TIMEOUT);
+        assert_eq!(spec.timeout, CUSTOM_LAUNCH_GRACE);
+        assert_eq!(spec.on_deadline, OnDeadline::Detach);
         assert_eq!(via, TerminalKind::Custom);
+    }
+
+    #[test]
+    fn the_default_launch_is_torn_down_on_its_deadline() {
+        let (spec, _) = launch_spec(None, "rl resume x:y").expect("spec");
+        assert_eq!(spec.on_deadline, OnDeadline::Terminate);
+    }
+
+    #[test]
+    fn a_custom_launcher_still_running_after_the_grace_counts_as_launched() {
+        let runner = FakeRunner::returning(Err(RunError::Detached));
+        let template = strings(&["/x/alacritty", "-e", "sh", "-c", "{command}"]);
+        let launched = launch(
+            &runner,
+            &rl_command(),
+            "claude-code:abc",
+            Some(&template),
+            false,
+        )
+        .expect("launches");
+        assert!(launched.launched);
+        assert_eq!(launched.via, TerminalKind::Custom);
+    }
+
+    #[test]
+    fn a_foreground_custom_launcher_is_left_running() {
+        let dir = std::env::temp_dir().join(format!(
+            "circus-resume-foreground-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let pid_file = dir.join("pid");
+        let script = format!("echo $$ > '{}'; sleep 30", pid_file.to_string_lossy());
+        let template = strings(&["/bin/sh", "-c", &script, "{command}"]);
+        let started = std::time::Instant::now();
+        let launched = launch(
+            &crate::process::SystemRunner,
+            &rl_command(),
+            "claude-code:abc",
+            Some(&template),
+            false,
+        );
+        let elapsed = started.elapsed();
+        let pid: libc::pid_t = std::fs::read_to_string(&pid_file)
+            .expect("pid file")
+            .trim()
+            .parse()
+            .expect("pid");
+        let alive = unsafe { libc::kill(pid, 0) };
+        unsafe { libc::killpg(pid, libc::SIGKILL) };
+        let _ = std::fs::remove_dir_all(dir);
+        assert!(launched.expect("launches").launched);
+        assert_eq!(alive, 0);
+        assert!(
+            elapsed < CUSTOM_LAUNCH_GRACE + Duration::from_secs(2),
+            "{elapsed:?}"
+        );
     }
 
     #[test]
@@ -356,6 +424,22 @@ mod tests {
     }
 
     #[test]
+    fn a_custom_launcher_timeout_names_the_launcher() {
+        let runner = FakeRunner::returning(Err(RunError::Timeout));
+        let template = strings(&["/x/wezterm", "{command}"]);
+        let error = launch(
+            &runner,
+            &rl_command(),
+            "claude-code:abc",
+            Some(&template),
+            false,
+        )
+        .expect_err("times out");
+        assert!(error.message.contains("/x/wezterm"), "{}", error.message);
+        assert!(!error.message.contains("iTerm2"), "{}", error.message);
+    }
+
+    #[test]
     fn a_successful_launch_reports_the_command() {
         let runner = FakeRunner::exiting(0, "");
         let launched = launch_with(&runner, "claude-code:abc", false).expect("launches");
@@ -377,7 +461,7 @@ mod tests {
     #[test]
     fn an_invalid_id_is_rejected_without_spawning() {
         let runner = FakeRunner::exiting(0, "");
-        let error = launch_with(&runner, "claude-code:a b", false).expect_err("invalid");
+        let error = launch_with(&runner, "claude-code:a\nb", false).expect_err("invalid");
         assert_eq!(error.kind, ErrorKind::InvalidArgument);
         assert_eq!(runner.spawned(), 0);
     }

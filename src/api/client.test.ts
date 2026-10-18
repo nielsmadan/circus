@@ -149,14 +149,21 @@ describe('createCircusApi', () => {
     });
   });
 
-  it('subscribes to the close-requested event', async () => {
+  it('subscribes to the close-requested event and passes on the time left', async () => {
     const unlisten = vi.fn();
     const listen = vi.fn<ListenFn>(() => Promise.resolve(unlisten));
     const handler = vi.fn();
     const stop = await createCircusApi(fakeInvoke(null), listen).onCloseRequested(handler);
-    expect(listen).toHaveBeenCalledWith('circus://close-requested', handler);
-    listen.mock.calls[0]?.[1]();
-    expect(handler).toHaveBeenCalledOnce();
+    expect(listen.mock.calls[0]?.[0]).toBe('circus://close-requested');
+    listen.mock.calls[0]?.[1]({ finish_in_ms: 450_000 });
+    listen.mock.calls[0]?.[1](null);
+    expect(handler.mock.calls).toEqual([[450_000], [null]]);
     expect(stop).toBe(unlisten);
+  });
+
+  it('cancels the close gate', async () => {
+    const invoke = fakeInvoke(null);
+    await createCircusApi(invoke, noListen).closeCancel();
+    expect(invoke).toHaveBeenCalledWith('close_cancel', {});
   });
 });

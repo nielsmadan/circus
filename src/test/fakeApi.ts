@@ -45,7 +45,7 @@ export interface FakeApi extends CircusApi {
   defer<M extends Method>(method: M): Deferred<Result<M>>;
   setDefault<M extends Method>(method: M, reply: Reply<M>): void;
   setList(list: ListResponse): void;
-  emitCloseRequested(): void;
+  emitCloseRequested(finishInMs?: number | null): void;
   readonly listening: boolean;
 }
 
@@ -90,7 +90,7 @@ const SCAN: ScanResponse = {
 
 export function createFakeApi(initial: ListResponse = makeList([])): FakeApi {
   let list = initial;
-  let closeHandler: (() => void) | null = null;
+  let closeHandler: ((finishInMs: number | null) => void) | null = null;
   const calls: FakeCall[] = [];
   const queues = new Map<Method, (() => Promise<unknown>)[]>();
 
@@ -121,6 +121,7 @@ export function createFakeApi(initial: ListResponse = makeList([])): FakeApi {
     appInfo: () => Promise.resolve(NATIVE_INFO),
     setPending: () => Promise.resolve(),
     closeAck: () => Promise.resolve(),
+    closeCancel: () => Promise.resolve(),
     exit: () => Promise.resolve(),
   };
 
@@ -149,6 +150,7 @@ export function createFakeApi(initial: ListResponse = makeList([])): FakeApi {
     appInfo: () => call('appInfo'),
     setPending: (count) => call('setPending', count),
     closeAck: () => call('closeAck'),
+    closeCancel: () => call('closeCancel'),
     exit: () => call('exit'),
     onCloseRequested: (handler) => {
       closeHandler = handler;
@@ -178,7 +180,7 @@ export function createFakeApi(initial: ListResponse = makeList([])): FakeApi {
     setList: (next) => {
       list = next;
     },
-    emitCloseRequested: () => closeHandler?.(),
+    emitCloseRequested: (finishInMs = null) => closeHandler?.(finishInMs),
     get listening() {
       return closeHandler !== null;
     },

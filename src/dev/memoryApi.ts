@@ -1,5 +1,6 @@
 import type { CircusApi } from '../api/client';
 import {
+  TAIL_CHARS,
   TAIL_MAX_IDS,
   type AppInfo,
   type CircusError,
@@ -24,10 +25,15 @@ const FAKE_WORLD = '/fake/world';
 const FAKE_REGISTRY = `${FAKE_WORLD}/xdg-data/ringleader/registry.json`;
 const CACHE_DELAY_MS = 5;
 const HOUR_MS = 3_600_000;
-const TAIL_CHARS = 50_000;
+const FINISH_TIMEOUT_MS = 450_000;
 const TAIL_TARGET_CHARS = 12_000;
 const DESTRUCTIVE: ReadonlySet<string> = new Set(['archive', 'delete', 'harvest']);
 const CHANGED = 'changed since you looked';
+const NO_STAMP = `${CHANGED}: no fingerprint, rescan`;
+const GONE = 'no longer in the registry';
+const FINGERPRINT = /^\d+(?::\d+){4}$/;
+const HAS_OFFSET = /(?:Z|[+-]\d\d(?::?\d\d)?)$/i;
+const TIME_CHARS = /^[0-9T:.+\-Z]{1,64}$/;
 
 const REPLIES = Object.freeze([
   'Looked at the failing test and traced it to a stale fixture.',
@@ -93,23 +99,74 @@ function outcome(
   };
 }
 
-function refusedOutcome(request: DecideRequest, reason: string): DecideOutcome {
-  return outcome(request, { status: 'refused', reason, message: reason });
+function refusedOutcome(
+  request: DecideRequest,
+  reason: string,
+  message: string = reason,
+): DecideOutcome {
+  return outcome(request, { status: 'refused', reason, message });
 }
 
-function refusal(request: DecideRequest, row: SessionRow): DecideOutcome | null {
-  if (!DESTRUCTIVE.has(request.action)) return null;
-  if (request.fingerprint === null) {
-    return refusedOutcome(request, `${CHANGED}: no fingerprint, rescan`);
-  }
-  if (request.mtime !== row.mtime) return refusedOutcome(request, CHANGED);
+// ringleader computes lifecycle_block for archive; the same transcript check names each operation
+function lifecycleReason(row: SessionRow, action: string): string | null {
+  const block = row.lifecycle_block;
+  if (block === null) return null;
+  return block.startsWith('cannot archive ') ? `cannot ${action} ${block.slice(15)}` : block;
+}
+
+function runningReason(row: SessionRow): string | null {
   if (row.running === true) {
-    return refusedOutcome(
-      request,
-      `${row.label} is running — finish it from inside with the ringleader-finish skill`,
-    );
+    return `${row.label} is running — finish it from inside with the ringleader-finish skill`;
   }
-  if (row.lifecycle_block !== null) return refusedOutcome(request, row.lifecycle_block);
+  if (row.running === null) {
+    return `can't tell whether ${row.label} is running — install presence with rl data presence install`;
+  }
+  return null;
+}
+
+// the order of gui_decide.decide: stamp, lifecycle, gone or changed, then presence
+function destructiveRefusal(
+  request: DecideRequest,
+  row: SessionRow | undefined,
+): DecideOutcome | null {
+  if (request.fingerprint === null || !FINGERPRINT.test(request.fingerprint)) {
+    return refusedOutcome(request, NO_STAMP);
+  }
+  if (row === undefined) {
+    return request.action === 'harvest'
+      ? refusedOutcome(request, GONE)
+      : refusedOutcome(request, GONE, `${request.id}: ${GONE}`);
+  }
+  const lifecycle = lifecycleReason(row, request.action);
+  if (lifecycle !== null) return refusedOutcome(request, lifecycle);
+  if (request.mtime !== row.mtime) {
+    return request.action === 'harvest'
+      ? refusedOutcome(request, CHANGED)
+      : refusedOutcome(request, CHANGED, `${row.label}: ${CHANGED}`);
+  }
+  const running = runningReason(row);
+  return running === null ? null : refusedOutcome(request, running);
+}
+
+function untilRefusal(request: DecideRequest, nowMs: number): DecideOutcome | null {
+  const until = request.until ?? '';
+  const parsed = Date.parse(until);
+  if (Number.isNaN(parsed)) {
+    return refusedOutcome(request, `--until is not an ISO 8601 time: '${until}'`);
+  }
+  if (!HAS_OFFSET.test(until)) return refusedOutcome(request, '--until needs a timezone offset');
+  if (parsed <= nowMs) return refusedOutcome(request, 'snooze time must be in the future');
+  return null;
+}
+
+function rustRejection(request: DecideRequest): CircusError | null {
+  if (request.action === 'snooze') {
+    if (request.until === null) return invalid('snooze needs an until time');
+    if (!TIME_CHARS.test(request.until))
+      return invalid(`invalid until: ${JSON.stringify(request.until)}`);
+  } else if (request.until !== null) {
+    return invalid(`until is only valid for snooze, not ${request.action}`);
+  }
   return null;
 }
 
@@ -122,16 +179,21 @@ function okPath(request: DecideRequest, row: SessionRow): string | null {
 function decideInMemory(
   rows: readonly SessionRow[],
   request: DecideRequest,
+  nowMs: number,
 ): { readonly outcome: DecideOutcome; readonly rows: readonly SessionRow[] } {
   const row = rows.find((candidate) => candidate.id === request.id);
+  const refused = DESTRUCTIVE.has(request.action)
+    ? destructiveRefusal(request, row)
+    : request.action === 'snooze'
+      ? untilRefusal(request, nowMs)
+      : null;
+  if (refused !== null) return { outcome: refused, rows };
   if (row === undefined) {
     return {
-      outcome: outcome(request, { status: 'failed', message: 'no longer in the registry' }),
+      outcome: outcome(request, { status: 'failed', message: `${request.id}: ${GONE}` }),
       rows,
     };
   }
-  const refused = refusal(request, row);
-  if (refused !== null) return { outcome: refused, rows };
   if (request.action === 'harvest' && row.project_short.endsWith('proj-00')) {
     return {
       outcome: outcome(request, { status: 'empty', message: 'nothing worth harvesting' }),
@@ -154,7 +216,7 @@ export function createMemoryApi(seed: ListResponse, options: MemoryApiOptions = 
   const harvestDelayMs = options.harvestDelayMs ?? 1_500;
   const cache = options.cache ?? true;
   let current: readonly SessionRow[] = [...seed.sessions];
-  let closeHandler: (() => void) | null = null;
+  let closeHandler: ((finishInMs: number | null) => void) | null = null;
 
   const after = <T>(ms: number, produce: () => T): Promise<T> =>
     new Promise((resolve, reject) => {
@@ -219,12 +281,15 @@ export function createMemoryApi(seed: ListResponse, options: MemoryApiOptions = 
       after(CACHE_DELAY_MS, () =>
         cache ? listOf(new Date(Date.now() - HOUR_MS).toISOString(), [...seed.sessions]) : null,
       ),
-    decide: (request) =>
-      after(request.action === 'harvest' ? harvestDelayMs : latencyMs, () => {
-        const result = decideInMemory(current, request);
+    decide: (request) => {
+      const rejected = rustRejection(request);
+      if (rejected !== null) return Promise.reject(rejected);
+      return after(request.action === 'harvest' ? harvestDelayMs : latencyMs, () => {
+        const result = decideInMemory(current, request, Date.now());
         current = result.rows;
         return result.outcome;
-      }),
+      });
+    },
     resume: (id) =>
       after(latencyMs, () => ({ command: `rl resume ${id}`, launched: false, via: 'iterm2' })),
     appInfo: () => after(latencyMs, () => APP_INFO),
@@ -235,6 +300,10 @@ export function createMemoryApi(seed: ListResponse, options: MemoryApiOptions = 
     closeAck: () =>
       after(latencyMs, () => {
         console.debug('[fake] close_ack');
+      }),
+    closeCancel: () =>
+      after(latencyMs, () => {
+        console.debug('[fake] close_cancel');
       }),
     exit: () =>
       after(latencyMs, () => {
@@ -248,7 +317,7 @@ export function createMemoryApi(seed: ListResponse, options: MemoryApiOptions = 
         };
       }),
     requestClose: () => {
-      closeHandler?.();
+      closeHandler?.(FINISH_TIMEOUT_MS);
     },
   };
 }

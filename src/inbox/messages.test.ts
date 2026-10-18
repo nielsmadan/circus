@@ -181,6 +181,20 @@ describe('settledToast', () => {
   );
 });
 
+describe('settledToast for an rl error document', () => {
+  it('reports the failure with rl’s message', () => {
+    const toast = settledToast({
+      kind: 'failed',
+      decision: decision('archive'),
+      error: error('rl_error', 'ambiguous session id'),
+    });
+    expect(toast).toMatchObject({
+      tone: 'warning',
+      text: 'Archive “fix flaky login” failed: ambiguous session id',
+    });
+  });
+});
+
 describe('undoToast', () => {
   it('names the undone decision', () => {
     expect(undoToast(decision('keep_going')).text).toBe('Undid keep going “fix flaky login”');

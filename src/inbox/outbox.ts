@@ -39,7 +39,8 @@ export interface OutboxEntry {
   readonly sendAt: number;
 }
 
-export function classifyDecideError(error: CircusError): 'error' | 'unknown' {
+export function classifyDecideError(error: CircusError): 'failed' | 'error' | 'unknown' {
+  if (error.kind === 'rl_error') return 'failed';
   return error.kind === 'timeout' || error.kind === 'failed' || error.kind === 'bad_output'
     ? 'unknown'
     : 'error';
@@ -47,6 +48,7 @@ export function classifyDecideError(error: CircusError): 'error' | 'unknown' {
 
 export type Settled =
   | { readonly kind: 'outcome'; readonly decision: Decision; readonly outcome: DecideOutcome }
+  | { readonly kind: 'failed'; readonly decision: Decision; readonly error: CircusError }
   | { readonly kind: 'error'; readonly decision: Decision; readonly error: CircusError }
   | { readonly kind: 'unknown'; readonly decision: Decision; readonly error: CircusError };
 

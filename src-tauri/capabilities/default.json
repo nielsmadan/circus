@@ -2,7 +2,8 @@
   "identifier": "default",
   "windows": ["main"],
   "permissions": [
-    "core:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "allow-rl-list",
     "allow-rl-scan",
     "allow-rl-tails",
@@ -12,6 +13,7 @@
     "allow-resume-session",
     "allow-set-pending",
     "allow-close-ack",
+    "allow-close-cancel",
     "allow-app-exit"
   ]
 }

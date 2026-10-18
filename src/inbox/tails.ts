@@ -1,6 +1,7 @@
-import { TAIL_MAX_IDS, type SessionRow, type TailItem } from '../api/types';
+import { TAIL_CHARS, TAIL_MAX_IDS, type SessionRow, type TailItem } from '../api/types';
 
 export const TAIL_CACHE_CAPACITY = 64;
+export const UNPASSABLE_TAIL = 'circus cannot pass this session id to rl';
 export const PREFETCH_OFFSETS: readonly number[] = Object.freeze([0, 1, -1, 2, 3, -2, 4, 5]);
 
 export function tailKey(id: string, mtime: string | null, fingerprint: string | null): string {
@@ -64,6 +65,25 @@ export function prefetchIds(
     .filter((row) => !inFlight.has(row.id) && !cached(row))
     .map((row) => row.id);
   return [...new Set(ids)].slice(0, TAIL_MAX_IDS);
+}
+
+// rows Rust dropped from the batch because their id is unsafe to pass as an argument
+export function missingTails(
+  requested: readonly SessionRow[],
+  items: readonly TailItem[],
+): TailItem[] {
+  const returned = new Set(items.map((item) => item.id));
+  return requested
+    .filter((row) => !returned.has(row.id))
+    .map((row) => ({
+      id: row.id,
+      text: '',
+      max_chars: TAIL_CHARS,
+      truncated: false,
+      unavailable: UNPASSABLE_TAIL,
+      mtime: row.mtime,
+      file_fingerprint: row.file_fingerprint,
+    }));
 }
 
 function isHighSurrogate(code: number): boolean {

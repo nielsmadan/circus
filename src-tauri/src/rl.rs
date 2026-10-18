@@ -3,38 +3,28 @@ use std::time::Duration;
 
 use crate::contract::{DecideRequest, DecisionAction, Envelope, TailsRequest};
 use crate::error::{CircusError, ErrorKind};
-use crate::process::{ProcessOutput, ProcessRunner, ProcessSpec, RunError};
+use crate::process::{OnDeadline, ProcessOutput, ProcessRunner, ProcessSpec, RunError};
 
 pub const LIST_TIMEOUT: Duration = Duration::from_secs(60);
 pub const SCAN_TIMEOUT: Duration = Duration::from_secs(300);
 pub const TAILS_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DECIDE_TIMEOUT: Duration = Duration::from_secs(120);
 pub const HARVEST_TIMEOUT: Duration = Duration::from_secs(420);
-pub const TAIL_DEFAULT_CHARS: u32 = 50_000;
 pub const TAIL_MAX_IDS: usize = 16;
 const TAIL_MIN_CHARS: u32 = 1_000;
 const TAIL_MAX_CHARS: u32 = 2_000_000;
-const SESSION_MAX_CHARS: usize = 200;
+const SESSION_ID_MAX_CHARS: usize = 1_000;
 const TIME_MAX_CHARS: usize = 64;
 const FINGERPRINT_MAX_CHARS: usize = 256;
 pub(crate) const STDERR_TAIL_CHARS: usize = 2_000;
 const CONTRACT_VERSION: u64 = 1;
+const EMPTY_TAILS: &[u8] = br#"{"version":1,"kind":"tails","items":[]}"#;
 const RL_TOO_OLD: &str = "The installed rl has no `rl gui` commands. Install the ringleader branch that has them: run `just install` in that ringleader checkout.";
 
 pub fn valid_session_id(id: &str) -> bool {
-    let Some((source, session)) = id.split_once(':') else {
-        return false;
-    };
-    let source_ok = source.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
-        && source
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
-    let session_ok = (1..=SESSION_MAX_CHARS).contains(&session.len())
-        && !session.starts_with('-')
-        && session
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
-    source_ok && session_ok
+    (1..=SESSION_ID_MAX_CHARS).contains(&id.chars().count())
+        && !id.starts_with('-')
+        && !id.chars().any(char::is_control)
 }
 
 fn valid_time(text: &str) -> bool {
@@ -56,38 +46,46 @@ pub fn scan_args() -> Vec<String> {
     vec!["gui".to_string(), "scan".to_string()]
 }
 
-pub fn tails_args(req: &TailsRequest) -> Result<Vec<String>, CircusError> {
+pub fn tails_args(req: &TailsRequest) -> Result<Option<Vec<String>>, CircusError> {
     if req.ids.is_empty() || req.ids.len() > TAIL_MAX_IDS {
         return Err(CircusError::invalid(format!(
             "tails takes 1 to {TAIL_MAX_IDS} ids, got {}",
             req.ids.len()
         )));
     }
-    if let Some(bad) = req.ids.iter().find(|id| !valid_session_id(id)) {
-        return Err(CircusError::invalid(format!("invalid session id: {bad:?}")));
-    }
     let distinct: HashSet<&str> = req.ids.iter().map(String::as_str).collect();
     if distinct.len() != req.ids.len() {
         return Err(CircusError::invalid("tails ids must not repeat"));
     }
-    let max_chars = req.max_chars.unwrap_or(TAIL_DEFAULT_CHARS);
+    let max_chars = req.max_chars;
     if !(TAIL_MIN_CHARS..=TAIL_MAX_CHARS).contains(&max_chars) {
         return Err(CircusError::invalid(format!(
             "max_chars must be {TAIL_MIN_CHARS} to {TAIL_MAX_CHARS}, got {max_chars}"
         )));
     }
-    Ok(["gui", "tail"]
+    let passable: Vec<String> = req
+        .ids
         .iter()
-        .map(|s| (*s).to_string())
-        .chain(req.ids.iter().cloned())
-        .chain([format!("--max-chars={max_chars}")])
-        .collect())
+        .filter(|id| valid_session_id(id))
+        .cloned()
+        .collect();
+    if passable.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(
+        ["gui", "tail"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .chain(passable)
+            .chain([format!("--max-chars={max_chars}")])
+            .collect(),
+    ))
 }
 
 pub fn decide_args(req: &DecideRequest) -> Result<Vec<String>, CircusError> {
-    if !valid_session_id(&req.id) {
+    if !valid_session_id(&req.id) || !req.id.contains(':') {
         return Err(CircusError::invalid(format!(
-            "invalid session id: {:?}",
+            "circus cannot pass the session id {:?} to rl",
             req.id
         )));
     }
@@ -157,8 +155,8 @@ pub fn parse_document(output: ProcessOutput, kind: &str) -> Result<Vec<u8>, Circ
             "rl printed output that is not UTF-8",
         ));
     }
-    let failed = |message: String| CircusError {
-        kind: ErrorKind::Failed,
+    let failed = |kind: ErrorKind, message: String| CircusError {
+        kind,
         message,
         exit_code: output.exit_code,
         stderr_tail: non_empty_tail(&output.stderr),
@@ -173,7 +171,7 @@ pub fn parse_document(output: ProcessOutput, kind: &str) -> Result<Vec<u8>, Circ
                 .message
                 .clone()
                 .unwrap_or_else(|| "rl reported an error".to_string());
-            return Err(failed(message));
+            return Err(failed(ErrorKind::RlError, message));
         }
         if envelope.version != CONTRACT_VERSION {
             return Err(CircusError::new(
@@ -195,8 +193,14 @@ pub fn parse_document(output: ProcessOutput, kind: &str) -> Result<Vec<u8>, Circ
                 None => format!("rl did not print a {kind} document"),
             },
         )),
-        Some(code) => Err(failed(format!("rl exited with code {code}"))),
-        None => Err(failed("rl was killed by a signal".to_string())),
+        Some(code) => Err(failed(
+            ErrorKind::Failed,
+            format!("rl exited with code {code}"),
+        )),
+        None => Err(failed(
+            ErrorKind::Failed,
+            "rl was killed by a signal".to_string(),
+        )),
     }
 }
 
@@ -208,6 +212,9 @@ pub fn map_run_error(error: RunError, not_found_message: &str) -> CircusError {
             ErrorKind::BadOutput,
             "rl printed more output than circus accepts",
         ),
+        RunError::Detached => {
+            CircusError::new(ErrorKind::Failed, "rl was left running past its deadline")
+        }
         RunError::Io(message) => CircusError::new(ErrorKind::Failed, message),
     }
 }
@@ -243,15 +250,14 @@ impl<R: ProcessRunner> RlClient<R> {
     }
 
     pub fn tails(&self, req: &TailsRequest) -> Result<Vec<u8>, CircusError> {
-        self.call(tails_args(req)?, TAILS_TIMEOUT, "tails")
+        match tails_args(req)? {
+            Some(args) => self.call(args, TAILS_TIMEOUT, "tails"),
+            None => Ok(EMPTY_TAILS.to_vec()),
+        }
     }
 
     pub fn decide(&self, req: &DecideRequest) -> Result<Vec<u8>, CircusError> {
         self.call(decide_args(req)?, decide_timeout(req.action), "outcome")
-    }
-
-    pub fn command(&self) -> &[String] {
-        &self.command
     }
 
     fn call(
@@ -272,6 +278,7 @@ impl<R: ProcessRunner> RlClient<R> {
             path_env: self.path_env.clone(),
             extra_env: Vec::new(),
             timeout,
+            on_deadline: OnDeadline::Terminate,
         };
         let output = self
             .runner
@@ -343,7 +350,7 @@ mod tests {
         items.iter().map(|s| (*s).to_string()).collect()
     }
 
-    fn tails_req(ids: &[&str], max_chars: Option<u32>) -> TailsRequest {
+    fn tails_req(ids: &[&str], max_chars: u32) -> TailsRequest {
         TailsRequest {
             ids: strings(ids),
             max_chars,
@@ -376,7 +383,6 @@ mod tests {
         assert_eq!(specs[0].args, strings(&["gui", "list"]));
         assert_eq!(specs[0].timeout, Duration::from_secs(60));
         assert_eq!(specs[0].path_env.as_deref(), Some("/w/bin:/usr/bin"));
-        assert_eq!(rl.command(), strings(&["/w/.venv/bin/rl"]));
     }
 
     #[test]
@@ -395,10 +401,10 @@ mod tests {
     }
 
     #[test]
-    fn tails_args_keep_request_order_and_default_max_chars() {
-        let args = tails_args(&tails_req(&["claude-code:a", "codex:b"], None)).expect("args");
+    fn tails_args_keep_request_order_and_max_chars() {
+        let args = tails_args(&tails_req(&["claude-code:a", "codex:b"], 50_000)).expect("args");
         assert_eq!(
-            args,
+            args.expect("passable ids"),
             strings(&[
                 "gui",
                 "tail",
@@ -408,7 +414,7 @@ mod tests {
             ])
         );
         let rl = client(FakeRunner::returning(TAILS));
-        rl.tails(&tails_req(&["claude-code:a"], Some(2000)))
+        rl.tails(&tails_req(&["claude-code:a"], 2000))
             .expect("tails");
         let specs = rl.runner.recorded();
         assert_eq!(specs[0].timeout, Duration::from_secs(30));
@@ -479,29 +485,40 @@ mod tests {
     }
 
     #[test]
-    fn invalid_ids_are_rejected() {
+    fn ids_are_checked_only_for_argument_safety() {
         let ok = "2026-10-16T09:00:00+00:00";
         for id in [
             "-x:y",
-            "Claude:y",
+            "",
             "claude-code",
-            "claude-code:a b",
-            "claude-code:-a",
-            "claude-code:",
+            "claude-code:a\nb",
+            "claude-code:a\0b",
         ] {
             assert_eq!(
                 kind_of(decide_args(&decide_req(DecisionAction::Keep, id, ok))),
                 ErrorKind::InvalidArgument,
-                "{id}"
+                "{id:?}"
             );
         }
-        let long = format!("claude-code:{}", "a".repeat(201));
+        let long = format!("claude-code:{}", "a".repeat(1_000));
         assert!(!valid_session_id(&long));
         assert!(valid_session_id(&format!(
             "claude-code:{}",
-            "a".repeat(200)
+            "a".repeat(988)
         )));
-        assert!(valid_session_id("pi:2026-10-16_a.b"));
+        for id in [
+            "pi:2026-10-16_a.b",
+            "Claude:y",
+            "claude-code:a b",
+            "claude-code:-a",
+            "droid:ünïcode/€",
+        ] {
+            assert!(valid_session_id(id), "{id:?}");
+            assert_eq!(
+                decide_args(&decide_req(DecisionAction::Keep, id, ok)).expect("passes")[3],
+                id
+            );
+        }
     }
 
     #[test]
@@ -527,14 +544,13 @@ mod tests {
     fn invalid_tails_requests_are_rejected() {
         let seventeen: Vec<String> = (0..17).map(|n| format!("codex:s{n}")).collect();
         let cases = [
-            tails_req(&["claude-code:a"], Some(10)),
-            tails_req(&[], None),
+            tails_req(&["claude-code:a"], 10),
+            tails_req(&[], 50_000),
             TailsRequest {
                 ids: seventeen,
-                max_chars: None,
+                max_chars: 50_000,
             },
-            tails_req(&["claude-code:a", "claude-code:a"], None),
-            tails_req(&["claude-code:a", "bad id", "codex:b"], None),
+            tails_req(&["claude-code:a", "claude-code:a"], 50_000),
         ];
         for case in &cases {
             assert_eq!(
@@ -545,10 +561,40 @@ mod tests {
         }
         let rl = client(FakeRunner::returning(TAILS));
         assert_eq!(
-            kind_of(rl.tails(&tails_req(&[], None))),
+            kind_of(rl.tails(&tails_req(&[], 50_000))),
             ErrorKind::InvalidArgument
         );
         assert!(rl.runner.recorded().is_empty());
+    }
+
+    #[test]
+    fn an_unpassable_tail_id_is_dropped_from_its_batch() {
+        let rl = client(FakeRunner::returning(TAILS));
+        rl.tails(&tails_req(&["claude-code:a", "-x", "codex:b"], 50_000))
+            .expect("tails");
+        assert_eq!(
+            rl.runner.recorded()[0].args,
+            strings(&[
+                "gui",
+                "tail",
+                "claude-code:a",
+                "codex:b",
+                "--max-chars=50000"
+            ])
+        );
+    }
+
+    #[test]
+    fn a_batch_of_only_unpassable_ids_returns_no_items_without_spawning() {
+        let rl = client(FakeRunner::returning(TAILS));
+        let bytes = rl
+            .tails(&tails_req(&["-x", "codex:\u{7}"], 50_000))
+            .expect("tails");
+        assert!(rl.runner.recorded().is_empty());
+        let document: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(document["kind"], "tails");
+        assert_eq!(document["version"], 1);
+        assert_eq!(document["items"], serde_json::json!([]));
     }
 
     #[test]
@@ -578,9 +624,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_document_maps_error_documents_to_failed() {
+    fn parse_document_maps_error_documents_to_rl_error() {
         let error = parse_document(output(ERROR, 1, ""), "list").expect_err("error doc");
-        assert_eq!(error.kind, ErrorKind::Failed);
+        assert_eq!(error.kind, ErrorKind::RlError);
         assert_eq!(error.message, "registry is locked by another writer");
         assert_eq!(error.exit_code, Some(1));
     }
