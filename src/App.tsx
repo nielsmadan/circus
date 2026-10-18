@@ -1,4 +1,8 @@
 import { useState } from 'react';
+import type { CircusApi } from './api/client';
+import { FinishingOverlay } from './inbox/FinishingOverlay';
+import { Toasts } from './inbox/Toasts';
+import { useInbox } from './inbox/useInbox';
 import { CommandPalette } from './palette/CommandPalette';
 import { appContext } from './shortcuts/contexts';
 import { useShortcutContext } from './shortcuts/react';
@@ -19,7 +23,8 @@ function Panel({ tab }: { tab: Tab }) {
   return <p>Not built yet</p>;
 }
 
-export function App() {
+export function App({ api }: { readonly api: CircusApi }) {
+  const controller = useInbox(api);
   const [active, setActive] = useState<Tab>('Inbox');
   const [paletteOpen, setPaletteOpen] = useState(false);
   useShortcutContext(appContext, (action) => {
@@ -62,6 +67,8 @@ export function App() {
         </main>
       ))}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <Toasts controller={controller} />
+      <FinishingOverlay controller={controller} />
     </div>
   );
 }

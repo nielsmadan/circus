@@ -137,6 +137,13 @@ export class Outbox {
     this.pump();
   }
 
+  reopen(): void {
+    if (!this.closing) return;
+    this.closing = false;
+    this.snapshot = null;
+    this.notify();
+  }
+
   discardUnsent(): readonly Decision[] {
     const removed = this.entries.filter(isUnsent);
     if (removed.length > 0) {

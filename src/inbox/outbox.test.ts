@@ -235,6 +235,16 @@ describe('Outbox', () => {
     });
   });
 
+  it('accepts decisions again after reopen', async () => {
+    const { outbox, enqueue } = setup();
+    enqueue('delete', 'claude-code:a');
+    outbox.flush();
+    await settle();
+    outbox.reopen();
+    expect(outbox.getSnapshot().closing).toBe(false);
+    expect(outbox.enqueue('keep', makeRow({ id: 'claude-code:b' })).ok).toBe(true);
+  });
+
   it('discards the queued decision during a flush and goes idle once the sending one settles', async () => {
     const { outbox, sends, settled, enqueue } = setup();
     const sending = enqueue('archive', 'claude-code:a');
