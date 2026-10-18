@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { CircusApi } from './api/client';
 import { FinishingOverlay } from './inbox/FinishingOverlay';
+import { InboxView } from './inbox/InboxView';
 import { Toasts } from './inbox/Toasts';
 import { useInbox } from './inbox/useInbox';
 import { CommandPalette } from './palette/CommandPalette';
@@ -18,11 +19,6 @@ const TAB_FOR_ACTION: Readonly<Partial<Record<AppAction, Tab>>> = {
   goHarvest: 'Harvest',
 };
 
-function Panel({ tab }: { tab: Tab }) {
-  if (tab === 'Inbox') return <p>Inbox placeholder</p>;
-  return <p>Not built yet</p>;
-}
-
 export function App({ api }: { readonly api: CircusApi }) {
   const controller = useInbox(api);
   const [active, setActive] = useState<Tab>('Inbox');
@@ -36,9 +32,9 @@ export function App({ api }: { readonly api: CircusApi }) {
     if (tab) setActive(tab);
   });
   return (
-    <div className="flex h-screen flex-col">
-      <header className="border-b px-4 py-2">
-        <div role="tablist" className="flex gap-2">
+    <div className="flex h-screen flex-col bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+      <header className="border-b border-neutral-200 px-4 py-2 dark:border-neutral-800">
+        <div role="tablist" aria-label="Sections" className="flex gap-2">
           {TABS.map((tab) => (
             <button
               key={tab}
@@ -61,9 +57,13 @@ export function App({ api }: { readonly api: CircusApi }) {
           id={`panel-${tab}`}
           aria-labelledby={`tab-${tab}`}
           hidden={tab !== active}
-          className="flex-1 p-4"
+          className={tab === 'Inbox' ? 'flex min-h-0 flex-1 flex-col' : 'flex-1 p-4'}
         >
-          <Panel tab={tab} />
+          {tab === 'Inbox' ? (
+            <InboxView controller={controller} api={api} visible={active === 'Inbox'} />
+          ) : (
+            <p>Not built yet</p>
+          )}
         </main>
       ))}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />

@@ -44,7 +44,7 @@ function controller(): InboxController {
 describe('App shell', () => {
   it('lists the tabs in order with Inbox selected and visible', () => {
     renderApp();
-    const tabs = screen.getAllByRole('tab');
+    const tabs = within(screen.getByRole('tablist', { name: 'Sections' })).getAllByRole('tab');
     expect(tabs.map((t) => t.textContent)).toEqual(['Enrich', 'Triage', 'Inbox', 'Harvest']);
     expect(screen.getByRole('tab', { name: 'Inbox' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tabpanel', { name: 'Inbox' })).toBeVisible();
