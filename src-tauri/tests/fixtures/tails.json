@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "kind": "tails",
+  "items": [
+    {
+      "id": "claude-code:abc",
+      "text": "assistant: done\n",
+      "max_chars": 50000,
+      "truncated": false,
+      "unavailable": null,
+      "mtime": "2026-10-16T09:00:00+00:00",
+      "file_fingerprint": "1:6:4068:1783324476000000000:1783324476000000000"
+    }
+  ]
+}

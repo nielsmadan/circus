@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rl-scan"
+description = "Enables the rl_scan command without any pre-configured scope."
+commands.allow = ["rl_scan"]
+
+[[permission]]
+identifier = "deny-rl-scan"
+description = "Denies the rl_scan command without any pre-configured scope."
+commands.deny = ["rl_scan"]

@@ -1,5 +1,13 @@
 {
   "identifier": "default",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "allow-rl-list",
+    "allow-rl-scan",
+    "allow-rl-tails",
+    "allow-rl-decide",
+    "allow-cached-list",
+    "allow-app-info"
+  ]
 }

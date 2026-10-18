@@ -90,9 +90,13 @@ lint: ensure-dist
 typecheck:
     @pnpm run type-check
 
-test: ensure-dist
+test: ensure-dist test-scripts
     @pnpm test
     @cargo test --locked --manifest-path {{manifest}}
+
+# Test scripts/sandbox-env.sh against a stubbed uv.
+test-scripts:
+    @bash scripts/sandbox-env-test.sh
 
 build:
     @pnpm run build
@@ -105,6 +109,21 @@ check:
     @cargo fmt --manifest-path {{manifest}} --check
     @cargo clippy --locked --manifest-path {{manifest}} --all-targets -- -D warnings
     @cargo test --locked --manifest-path {{manifest}}
+    @bash scripts/sandbox-env-test.sh
+
+# Run the app against a freshly built synthetic world (never live data).
+dev-sandbox: ensure-dist
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source scripts/sandbox-env.sh
+    pnpm tauri dev
+
+# Run the Rust client against real `rl gui` in a freshly built synthetic world.
+smoke-sandbox: ensure-dist
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source scripts/sandbox-env.sh
+    cargo test --locked --manifest-path {{manifest}} --test contract_smoke -- --ignored --test-threads=1
 
 build-debug: ensure-dist
     @pnpm tauri build --debug --bundles app
