@@ -1,0 +1,33 @@
+pre-commit:
+  jobs:
+    - name: fix
+      group:
+        piped: true
+        jobs:
+          - name: eslint-fix
+            glob: '*.{ts,tsx,js}'
+            run: pnpm exec eslint --fix {staged_files} || true
+            stage_fixed: true
+          - name: prettier-fix
+            glob: '*.{ts,tsx,js,json,css,html,md,yaml,yml}'
+            run: pnpm exec prettier --write {staged_files} || true
+            stage_fixed: true
+
+    - name: check
+      group:
+        parallel: true
+        jobs:
+          - name: lint
+            glob: '*.{ts,tsx,js}'
+            run: pnpm exec eslint --max-warnings 0 {staged_files}
+          - name: format
+            glob: '*.{ts,tsx,js,json,css,html,md,yaml,yml}'
+            run: pnpm exec prettier --check {staged_files}
+          - name: rustfmt
+            glob: 'src-tauri/**/*.rs'
+            run: rustfmt --edition 2024 --check {staged_files}
+
+pre-push:
+  jobs:
+    - name: check
+      run: just check

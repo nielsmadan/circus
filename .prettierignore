@@ -1,0 +1,7 @@
+dist
+src-tauri/target
+src-tauri/gen
+pnpm-lock.yaml
+.local
+src/test/golden
+docs/plans
