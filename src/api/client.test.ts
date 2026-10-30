@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { makeList } from '../test/fixtures';
+import { makeList, makeScanSummary } from '../test/fixtures';
 import { createCircusApi, decodeDocument, type InvokeFn, type ListenFn } from './client';
 import type { CircusError, DecideRequest } from './types';
 
@@ -15,7 +15,7 @@ const noListen: ListenFn = () => Promise.resolve(() => undefined);
 
 const timeout: CircusError = {
   kind: 'timeout',
-  message: 'rl gui list timed out',
+  message: 'rl inbox timed out',
   exit_code: null,
   stderr_tail: null,
 };
@@ -47,8 +47,10 @@ describe('createCircusApi', () => {
     await expect(createCircusApi(invoke, noListen).list()).resolves.toEqual(doc);
   });
 
-  it('scans through rl_scan', async () => {
-    const doc = { version: 1, kind: 'scan', added: 2 };
+  it('scans through rl_scan and returns the list it printed', async () => {
+    const doc = makeList([], {
+      scan: makeScanSummary({ added: 2, unavailable_sources: ['opencode'] }),
+    });
     const invoke = fakeInvoke(bytes(doc));
     await expect(createCircusApi(invoke, noListen).scan()).resolves.toEqual(doc);
     expect(invoke).toHaveBeenCalledWith('rl_scan', {});

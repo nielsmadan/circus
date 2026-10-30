@@ -1,8 +1,8 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import listGolden from '../test/golden/gui-list.json';
-import outcomeOkGolden from '../test/golden/gui-outcome-ok.json';
-import outcomeRefusedGolden from '../test/golden/gui-outcome-refused.json';
-import tailsGolden from '../test/golden/gui-tails.json';
+import listGolden from '../test/golden/contract-list.json';
+import outcomeOkGolden from '../test/golden/contract-outcome-ok.json';
+import outcomeRefusedGolden from '../test/golden/contract-outcome-refused.json';
+import tailsGolden from '../test/golden/contract-tails.json';
 import {
   DECIDE_OUTCOME_KEYS,
   LIST_RESPONSE_KEYS,
@@ -27,6 +27,7 @@ describe('golden documents', () => {
     expect(keysOf(listGolden)).toEqual([...LIST_RESPONSE_KEYS]);
     expect(keysOf(listGolden.presence)).toEqual(['problem', 'state']);
     expect(keysOf(listGolden.roundup)).toEqual(['age_human', 'last_at', 'stale', 'stale_hours']);
+    expect(listGolden.scan).toBeNull();
     expect(listGolden.sessions.length).toBeGreaterThanOrEqual(1);
     listGolden.sessions.forEach((session) => {
       expect(keysOf(session)).toEqual([...SESSION_ROW_KEYS]);

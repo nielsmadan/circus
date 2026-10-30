@@ -13,18 +13,42 @@ export interface Flight<A> {
   readonly lastStarted: number;
 }
 
+export interface Sequence {
+  next(): number;
+  readonly lastStarted: number;
+}
+
+export function createSequence(): Sequence {
+  let lastStarted = 0;
+  return {
+    next() {
+      lastStarted += 1;
+      return lastStarted;
+    },
+    get lastStarted() {
+      return lastStarted;
+    },
+  };
+}
+
 export function createFlight<A, T>(
   run: (arg: A) => Promise<T>,
   onLanded: (landed: Landed<A, T>) => void,
 ): Flight<A> {
-  let counter = 0;
+  return createSequencedFlight(run, onLanded, createSequence());
+}
+
+export function createSequencedFlight<A, T>(
+  run: (arg: A) => Promise<T>,
+  onLanded: (landed: Landed<A, T>) => void,
+  sequence: Sequence,
+): Flight<A> {
   let lastStarted = 0;
   let busy = false;
   let next: { readonly arg: A } | null = null;
 
   function start(arg: A): void {
-    counter += 1;
-    const seq = counter;
+    const seq = sequence.next();
     lastStarted = seq;
     busy = true;
     void new Promise<T>((resolve) => resolve(run(arg)))

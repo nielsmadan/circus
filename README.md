@@ -1,6 +1,6 @@
 # Circus
 
-A macOS desktop app for [ringleader](../ringleader). Circus shows the dormant agent sessions ringleader tracks as an inbox: a session list, a reading pane with the end of the transcript, and one-key decisions (harvest and archive, archive, delete, snooze, keep long-term, keep going) with undo. Enrich, Triage and Harvest tabs exist as placeholders. Everything the app knows about sessions comes from `rl gui`, ringleader's versioned JSON interface.
+A macOS desktop app for [ringleader](../../ringleader/dev2). Circus shows the dormant agent sessions ringleader tracks as an inbox: a session list, a reading pane with the end of the transcript, and one-key decisions (harvest and archive, archive, delete, snooze, keep long-term, keep going) with undo. Enrich, Triage and Harvest tabs exist as placeholders. Everything the app knows about sessions comes from ringleader's versioned JSON mode (`--json` on `rl inbox`, `rl data export` and the guarded `rl session` verbs).
 
 Tauri 2, React 19, TypeScript, Rust. Unsigned, no updater; macOS only.
 
@@ -10,8 +10,8 @@ Tauri 2, React 19, TypeScript, Rust. Unsigned, no updater; macOS only.
 - Node 24 and pnpm 12.9.0 (`packageManager` in `package.json`)
 - Rust stable with `clippy` and `rustfmt`, `just`, `lefthook`
 - a checkout of `shortcutkit-js` beside this one (`../shortcutkit-js`); `@shortcutkit/core` is linked from it
-- for the sandbox recipes: the ringleader worktree at `../circus-worktrees/ringleader` (override with `CIRCUS_RINGLEADER`) with `uv sync` run in it
-- for real use: an `rl` installed from the ringleader branch that has the `rl gui` group (`just install` in that checkout)
+- for the sandbox recipes: the ringleader checkout at `../../ringleader/dev2` (override with `CIRCUS_RINGLEADER`) with `uv sync` run in it
+- for real use: an `rl` installed from a ringleader checkout that has the `--json` commands (`just install` in that checkout)
 
 ## Quick start
 

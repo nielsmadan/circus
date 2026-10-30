@@ -4,10 +4,9 @@ import type {
   DecideOutcome,
   DecideRequest,
   ListResponse,
-  ScanResponse,
   TailsResponse,
 } from '../api/types';
-import { makeList } from './fixtures';
+import { makeList, makeScanSummary } from './fixtures';
 
 type Method = Exclude<keyof CircusApi, 'onCloseRequested'>;
 type Result<M extends Method> = Awaited<ReturnType<CircusApi[M]>>;
@@ -79,15 +78,6 @@ export function okOutcome(
   };
 }
 
-const SCAN: ScanResponse = {
-  version: 1,
-  kind: 'scan',
-  scanned_at: '2026-10-16T12:30:00+00:00',
-  added: 0,
-  removed: 0,
-  unavailable_sources: [],
-};
-
 export function createFakeApi(initial: ListResponse = makeList([])): FakeApi {
   let list = initial;
   let closeHandler: ((finishInMs: number | null) => void) | null = null;
@@ -113,7 +103,7 @@ export function createFakeApi(initial: ListResponse = makeList([])): FakeApi {
 
   const defaults: { [M in Method]: Reply<M> } = {
     list: () => Promise.resolve(list),
-    scan: () => Promise.resolve(SCAN),
+    scan: () => Promise.resolve({ ...list, scan: makeScanSummary() }),
     tails: (ids) => Promise.resolve(tails(ids)),
     cachedList: () => Promise.resolve(null),
     decide: (request) => Promise.resolve(okOutcome(request)),

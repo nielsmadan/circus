@@ -61,6 +61,7 @@ mod tests {
 
     const LIST: &[u8] = include_bytes!("../tests/fixtures/list.json");
     const SCAN: &[u8] = include_bytes!("../tests/fixtures/scan.json");
+    const TAILS: &[u8] = include_bytes!("../tests/fixtures/tails.json");
 
     fn temp_dir(name: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
@@ -145,7 +146,10 @@ mod tests {
         let dir = temp_dir("read");
         let scan = dir.join("scan.json");
         std::fs::write(&scan, SCAN).expect("write scan");
-        assert_eq!(read_cache(Some(&scan)), Vec::<u8>::new());
+        assert_eq!(read_cache(Some(&scan)), SCAN);
+        let tails = dir.join("tails.json");
+        std::fs::write(&tails, TAILS).expect("write tails");
+        assert_eq!(read_cache(Some(&tails)), Vec::<u8>::new());
         let invalid = dir.join("invalid.json");
         std::fs::write(&invalid, [0xff]).expect("write invalid");
         assert_eq!(read_cache(Some(&invalid)), Vec::<u8>::new());

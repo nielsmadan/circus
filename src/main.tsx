@@ -20,7 +20,7 @@ async function createApi(): Promise<CircusApi> {
   const [{ createMemoryApi }, { syntheticRows }, golden] = await Promise.all([
     import('./dev/memoryApi'),
     import('./dev/synthetic'),
-    import('./test/golden/gui-list.json'),
+    import('./test/golden/contract-list.json'),
   ]);
   const env = import.meta.env;
   const seed: ListResponse = {

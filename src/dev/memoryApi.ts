@@ -124,7 +124,7 @@ function runningReason(row: SessionRow): string | null {
   return null;
 }
 
-// the order of gui_decide.decide: stamp, lifecycle, gone or changed, then presence
+// the order of guarded.decide: stamp, gone, lifecycle, changed, then presence
 function destructiveRefusal(
   request: DecideRequest,
   row: SessionRow | undefined,
@@ -260,14 +260,13 @@ export function createMemoryApi(seed: ListResponse, options: MemoryApiOptions = 
   return {
     list: () => after(latencyMs, () => listOf(new Date().toISOString(), current)),
     scan: () =>
-      after(2 * latencyMs, () => ({
-        version: 1,
-        kind: 'scan',
-        scanned_at: new Date().toISOString(),
-        added: 0,
-        removed: 0,
-        unavailable_sources: [],
-      })),
+      after(2 * latencyMs, () => {
+        const scannedAt = new Date().toISOString();
+        return {
+          ...listOf(scannedAt, current),
+          scan: { scanned_at: scannedAt, added: 0, removed: 0, unavailable_sources: [] },
+        };
+      }),
     tails: (ids) => {
       if (ids.length === 0 || ids.length > TAIL_MAX_IDS) {
         return Promise.reject(invalid(`tails takes 1 to ${TAIL_MAX_IDS} ids`));

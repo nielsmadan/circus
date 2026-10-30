@@ -15,11 +15,16 @@ import {
   type CircusError,
   type DecisionAction,
   type ListResponse,
-  type ScanResponse,
   type SessionRow,
 } from '../api/types';
 import { adoptList, markApplied, type Applied } from './applied';
-import { createFlight, type Flight, type Landed } from './coalesce';
+import {
+  createSequence,
+  createSequencedFlight,
+  type Flight,
+  type Landed,
+  type Sequence,
+} from './coalesce';
 import { clientRefusal, decisionGuard, visibleSessions } from './derive';
 import {
   enqueuedToast,
@@ -69,6 +74,19 @@ export interface InboxController {
   dismissToast(id: number): void;
   notify(spec: ToastSpec): void;
   discardUnsent(): void;
+}
+
+export interface LandedList {
+  readonly from: 'list' | 'scan';
+  readonly seq: number;
+  readonly ok: boolean;
+}
+
+export interface ListLanding {
+  readonly apply: boolean;
+  readonly relist: boolean;
+  readonly showError: boolean;
+  readonly lastAppliedSeq: number;
 }
 
 export interface SettleEffects {
@@ -131,6 +149,33 @@ export function settleEffects(settled: Settled): SettleEffects {
   }
 }
 
+export function landList(
+  lastAppliedSeq: number,
+  landed: LandedList,
+  listInFlightSince: number | null,
+): ListLanding {
+  const fresh = landed.seq > lastAppliedSeq;
+  if (!landed.ok) {
+    return {
+      apply: false,
+      relist: false,
+      showError: landed.from === 'list' && fresh,
+      lastAppliedSeq,
+    };
+  }
+  const applied = fresh ? landed.seq : lastAppliedSeq;
+  if (landed.from === 'list') {
+    return { apply: fresh, relist: false, showError: false, lastAppliedSeq: applied };
+  }
+  const overtaken = listInFlightSince !== null && listInFlightSince > landed.seq;
+  return {
+    apply: fresh,
+    relist: !fresh || overtaken,
+    showError: false,
+    lastAppliedSeq: overtaken ? Math.max(applied, listInFlightSince) : applied,
+  };
+}
+
 const IDLE_HANDLERS: Handlers = {
   onSettled: () => undefined,
   onListLanded: () => undefined,
@@ -144,6 +189,7 @@ function reportError(error: unknown): void {
 
 interface Engine {
   readonly outbox: Outbox;
+  readonly sequence: Pick<Sequence, 'lastStarted'>;
   readonly listFlight: Flight<undefined>;
   readonly scanFlight: Flight<undefined>;
 }
@@ -151,7 +197,7 @@ interface Engine {
 interface Handlers {
   onSettled(settled: Settled): void;
   onListLanded(landed: Landed<undefined, ListResponse>): void;
-  onScanLanded(landed: Landed<undefined, ScanResponse>): void;
+  onScanLanded(landed: Landed<undefined, ListResponse>): void;
   onScanStarted(): void;
 }
 
@@ -171,18 +217,21 @@ function createEngine(
     clearTimer: (handle) => clock.clearTimer(handle),
     onSettled: (settled) => handlers.current.onSettled(settled),
   });
-  const listFlight = createFlight<undefined, ListResponse>(
+  const sequence = createSequence();
+  const listFlight = createSequencedFlight<undefined, ListResponse>(
     () => api.list(),
     (landed) => handlers.current.onListLanded(landed),
+    sequence,
   );
-  const scanFlight = createFlight<undefined, ScanResponse>(
+  const scanFlight = createSequencedFlight<undefined, ListResponse>(
     () => {
       handlers.current.onScanStarted();
       return api.scan();
     },
     (landed) => handlers.current.onScanLanded(landed),
+    sequence,
   );
-  return { outbox, listFlight, scanFlight };
+  return { outbox, sequence, listFlight, scanFlight };
 }
 
 export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxController {
@@ -201,6 +250,7 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
   const liveLanded = useRef(false);
   const warnedSources = useRef('');
   const lastListLandedAt = useRef<number | null>(null);
+  const lastAppliedSeq = useRef(0);
   const started = useRef(false);
   const closingRef = useRef(false);
   const nextToastId = useRef(1);
@@ -208,7 +258,7 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
   const toastTimers = useRef(new Set<unknown>());
   const clockRef = useRef(clock);
   const [engine] = useState(() => createEngine(api, clock, handlers, lastSent));
-  const { outbox, listFlight, scanFlight } = engine;
+  const { outbox, sequence, listFlight, scanFlight } = engine;
 
   const snapshot = useSyncExternalStore(
     useCallback((listener: () => void) => outbox.subscribe(listener), [outbox]),
@@ -250,10 +300,28 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
 
   useLayoutEffect(() => {
     clockRef.current = clock;
+    const land = (from: LandedList['from'], landed: Landed<undefined, ListResponse>) => {
+      const { seq, result } = landed;
+      const landing = landList(
+        lastAppliedSeq.current,
+        { from, seq, ok: result.ok },
+        listFlight.busy ? listFlight.lastStarted : null,
+      );
+      lastAppliedSeq.current = landing.lastAppliedSeq;
+      if (result.ok && landing.apply) {
+        liveLanded.current = true;
+        setList(result.value);
+        setListStale(false);
+        setLoadError(null);
+        setApplied((a) => adoptList(a, seq));
+      }
+      if (!result.ok && landing.showError) setLoadError(result.error);
+      if (landing.relist) listFlight.request(undefined);
+    };
     handlers.current = {
       onSettled(settled) {
         const effects = settleEffects(settled);
-        const seq = listFlight.lastStarted;
+        const seq = sequence.lastStarted;
         // applied must commit before the outbox drops the entry, or the row flashes back
         flushSync(() => {
           if (effects.markApplied) setApplied((a) => markApplied(a, settled.decision.row.id, seq));
@@ -265,15 +333,7 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
       },
       onListLanded(landed) {
         lastListLandedAt.current = clockRef.current.now();
-        if (!landed.result.ok) {
-          setLoadError(landed.result.error);
-          return;
-        }
-        liveLanded.current = true;
-        setList(landed.result.value);
-        setListStale(false);
-        setLoadError(null);
-        setApplied((a) => adoptList(a, landed.seq));
+        land('list', landed);
       },
       onScanLanded(landed) {
         setScanning(false);
@@ -284,9 +344,11 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
             undo: false,
             detail: null,
           });
+          land('scan', landed);
           return;
         }
-        const unavailable = landed.result.value.unavailable_sources;
+        lastListLandedAt.current = clockRef.current.now();
+        const unavailable = landed.result.value.scan?.unavailable_sources ?? [];
         const key = unavailable.join('\n');
         if (key !== warnedSources.current) {
           warnedSources.current = key;
@@ -299,7 +361,7 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
             });
           }
         }
-        listFlight.request(undefined);
+        land('scan', landed);
       },
       onScanStarted() {
         setScanning(true);

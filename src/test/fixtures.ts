@@ -1,4 +1,4 @@
-import type { ListResponse, SessionRow } from '../api/types';
+import type { ListResponse, ScanSummary, SessionRow } from '../api/types';
 
 const BASE_ROW: SessionRow = {
   id: 'claude-code:s0',
@@ -53,7 +53,18 @@ export function makeList(
     recent_days: 7,
     presence: { state: 'ok', problem: null },
     roundup: { last_at: null, age_human: null, stale: false, stale_hours: 8 },
+    scan: null,
     sessions: [...rows],
+    ...overrides,
+  };
+}
+
+export function makeScanSummary(overrides: Partial<ScanSummary> = {}): ScanSummary {
+  return {
+    scanned_at: '2026-10-16T12:30:00+00:00',
+    added: 0,
+    removed: 0,
+    unavailable_sources: [],
     ...overrides,
   };
 }

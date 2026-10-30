@@ -18,7 +18,7 @@
     "lint": "eslint --max-warnings 0 .",
     "type-check": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
     "check-all": "pnpm run format:check && pnpm run lint && pnpm run type-check",
-    "test": "TZ=Europe/Berlin vitest run",
+    "test": "TZ=Europe/Berlin vitest run --exclude 'src/**/*.perf.test.{ts,tsx}' && TZ=Europe/Berlin vitest run --no-file-parallelism perf.test",
     "test:watch": "TZ=Europe/Berlin vitest"
   },
   "dependencies": {

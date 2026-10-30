@@ -288,11 +288,11 @@ describe('reading-pane conversation', () => {
     await advance();
     expect(tailCalls().at(-1)).toEqual(ids(11, 10, 9));
     await act(async () => {
-      held[1]?.reply.reject(circusError('timeout', 'rl gui tail timed out'));
+      held[1]?.reply.reject(circusError('timeout', 'rl data export timed out'));
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(conversation()).toHaveTextContent(
-      'Couldn’t load the conversation: rl gui tail timed out',
+      'Couldn’t load the conversation: rl data export timed out',
     );
 
     click(0);
@@ -333,7 +333,7 @@ describe('reading-pane conversation', () => {
     click(11);
     await advance();
     await act(async () => {
-      held[1]?.reply.reject(circusError('timeout', 'rl gui tail timed out'));
+      held[1]?.reply.reject(circusError('timeout', 'rl data export timed out'));
       await vi.advanceTimersByTimeAsync(0);
     });
     click(0);
@@ -352,7 +352,7 @@ describe('reading-pane conversation', () => {
     click(4);
     await advance();
     await act(async () => {
-      held[0]?.reply.reject(circusError('timeout', 'rl gui tail timed out'));
+      held[0]?.reply.reject(circusError('timeout', 'rl data export timed out'));
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(tailCalls().at(-1)).toEqual(ids(4, 5, 3, 6, 7, 2, 8, 9));
@@ -407,11 +407,11 @@ describe('reading-pane conversation', () => {
     expect(tailCalls().at(-1)).toContain(id(0));
 
     await act(async () => {
-      held.at(-1)?.reply.reject(circusError('timeout', 'rl gui tail timed out'));
+      held.at(-1)?.reply.reject(circusError('timeout', 'rl data export timed out'));
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(conversation()).toHaveTextContent(
-      'Couldn’t refresh the conversation: rl gui tail timed out',
+      'Couldn’t refresh the conversation: rl data export timed out',
     );
     expect(transcript()).toBe(`tail of ${id(0)}`);
   });

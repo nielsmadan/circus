@@ -19,7 +19,11 @@ const FINGERPRINT_MAX_CHARS: usize = 256;
 pub(crate) const STDERR_TAIL_CHARS: usize = 2_000;
 const CONTRACT_VERSION: u64 = 1;
 const EMPTY_TAILS: &[u8] = br#"{"version":1,"kind":"tails","items":[]}"#;
-const RL_TOO_OLD: &str = "The installed rl has no `rl gui` commands. Install the ringleader branch that has them: run `just install` in that ringleader checkout.";
+const RL_TOO_OLD: &str = "The installed rl is too old for circus: it lacks the --json inbox, export and session commands. Run `just install` in your ringleader checkout.";
+const CONTRACT_COMMANDS: &[&str] = &[
+    "inbox", "data", "export", "session", "archive", "delete", "harvest", "snooze", "keep", "mark",
+    "reviewed",
+];
 
 pub fn valid_session_id(id: &str) -> bool {
     (1..=SESSION_ID_MAX_CHARS).contains(&id.chars().count())
@@ -38,12 +42,16 @@ fn valid_fingerprint(text: &str) -> bool {
     (1..=FINGERPRINT_MAX_CHARS).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_graphic())
 }
 
+fn strings(items: &[&str]) -> Vec<String> {
+    items.iter().map(|s| (*s).to_string()).collect()
+}
+
 pub fn list_args() -> Vec<String> {
-    vec!["gui".to_string(), "list".to_string()]
+    strings(&["inbox", "--json"])
 }
 
 pub fn scan_args() -> Vec<String> {
-    vec!["gui".to_string(), "scan".to_string()]
+    strings(&["inbox", "--json", "--scan"])
 }
 
 pub fn tails_args(req: &TailsRequest) -> Result<Option<Vec<String>>, CircusError> {
@@ -73,11 +81,10 @@ pub fn tails_args(req: &TailsRequest) -> Result<Option<Vec<String>>, CircusError
         return Ok(None);
     }
     Ok(Some(
-        ["gui", "tail"]
-            .iter()
-            .map(|s| (*s).to_string())
+        strings(&["data", "export"])
+            .into_iter()
             .chain(passable)
-            .chain([format!("--max-chars={max_chars}")])
+            .chain(["--json".to_string(), format!("--max-chars={max_chars}")])
             .collect(),
     ))
 }
@@ -117,19 +124,28 @@ pub fn decide_args(req: &DecideRequest) -> Result<Vec<String>, CircusError> {
         }
         _ => {}
     }
-    let base = [
-        "gui".to_string(),
-        "decide".to_string(),
-        req.action.as_str().to_string(),
-        req.id.clone(),
-        format!("--mtime={}", req.mtime),
-    ];
+    let verb: &[&str] = match req.action {
+        DecisionAction::Archive => &["session", "archive"],
+        DecisionAction::Delete => &["session", "delete"],
+        DecisionAction::Harvest => &["session", "harvest"],
+        DecisionAction::Snooze => &["session", "snooze"],
+        DecisionAction::Keep => &["session", "keep"],
+        DecisionAction::KeepGoing => &["session", "mark", "reviewed"],
+    };
+    let archive = (req.action == DecisionAction::Harvest).then(|| "--archive".to_string());
     let fingerprint = req
         .fingerprint
         .iter()
-        .map(|fp| format!("--fingerprint={fp}"));
+        .map(|fp| format!("--if-fingerprint={fp}"));
     let until = req.until.iter().map(|until| format!("--until={until}"));
-    Ok(base.into_iter().chain(fingerprint).chain(until).collect())
+    Ok(strings(verb)
+        .into_iter()
+        .chain([req.id.clone()])
+        .chain(archive)
+        .chain(["--json".to_string(), format!("--if-mtime={}", req.mtime)])
+        .chain(fingerprint)
+        .chain(until)
+        .collect())
 }
 
 pub fn decide_timeout(action: DecisionAction) -> Duration {
@@ -142,6 +158,26 @@ pub fn decide_timeout(action: DecisionAction) -> Duration {
 pub(crate) fn last_chars(text: &str, count: usize) -> String {
     let total = text.chars().count();
     text.chars().skip(total.saturating_sub(count)).collect()
+}
+
+fn names_a_contract_command(line: &str) -> bool {
+    line.strip_prefix("rl: unknown command '")
+        .and_then(|rest| rest.split_once('\''))
+        .is_some_and(|(name, _)| CONTRACT_COMMANDS.contains(&name))
+}
+
+fn rejects_json_flag(line: &str) -> bool {
+    line.split_once("error: unrecognized arguments:")
+        .is_some_and(|(_, rest)| rest.split_whitespace().any(|arg| arg == "--json"))
+}
+
+fn is_too_old(output: &ProcessOutput) -> bool {
+    output.exit_code == Some(2)
+        && output.stdout.is_empty()
+        && output
+            .stderr
+            .lines()
+            .any(|line| rejects_json_flag(line) || names_a_contract_command(line))
 }
 
 fn non_empty_tail(stderr: &str) -> Option<String> {
@@ -180,10 +216,10 @@ pub fn parse_document(output: ProcessOutput, kind: &str) -> Result<Vec<u8>, Circ
             ));
         }
     }
+    if is_too_old(&output) {
+        return Err(CircusError::new(ErrorKind::RlTooOld, RL_TOO_OLD));
+    }
     match output.exit_code {
-        Some(2) if output.stderr.contains("unknown command 'gui'") => {
-            Err(CircusError::new(ErrorKind::RlTooOld, RL_TOO_OLD))
-        }
         Some(0) => Err(CircusError::new(
             ErrorKind::BadOutput,
             match envelope {
@@ -246,7 +282,7 @@ impl<R: ProcessRunner> RlClient<R> {
     }
 
     pub fn scan(&self) -> Result<Vec<u8>, CircusError> {
-        self.call(scan_args(), SCAN_TIMEOUT, "scan")
+        self.call(scan_args(), SCAN_TIMEOUT, "list")
     }
 
     pub fn tails(&self, req: &TailsRequest) -> Result<Vec<u8>, CircusError> {
@@ -346,10 +382,6 @@ mod tests {
         }
     }
 
-    fn strings(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| (*s).to_string()).collect()
-    }
-
     fn tails_req(ids: &[&str], max_chars: u32) -> TailsRequest {
         TailsRequest {
             ids: strings(ids),
@@ -373,14 +405,14 @@ mod tests {
 
     #[test]
     fn list_runs_the_resolved_command_with_list_args() {
-        assert_eq!(list_args(), strings(&["gui", "list"]));
-        assert_eq!(scan_args(), strings(&["gui", "scan"]));
+        assert_eq!(list_args(), strings(&["inbox", "--json"]));
+        assert_eq!(scan_args(), strings(&["inbox", "--json", "--scan"]));
         let rl = client(FakeRunner::returning(LIST));
         assert_eq!(rl.list().expect("list"), LIST);
         let specs = rl.runner.recorded();
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].program, "/w/.venv/bin/rl");
-        assert_eq!(specs[0].args, strings(&["gui", "list"]));
+        assert_eq!(specs[0].args, strings(&["inbox", "--json"]));
         assert_eq!(specs[0].timeout, Duration::from_secs(60));
         assert_eq!(specs[0].path_env.as_deref(), Some("/w/bin:/usr/bin"));
     }
@@ -396,7 +428,10 @@ mod tests {
         rl.scan().expect("scan");
         let specs = rl.runner.recorded();
         assert_eq!(specs[0].program, "uv");
-        assert_eq!(specs[0].args, strings(&["run", "rl", "gui", "scan"]));
+        assert_eq!(
+            specs[0].args,
+            strings(&["run", "rl", "inbox", "--json", "--scan"])
+        );
         assert_eq!(specs[0].timeout, Duration::from_secs(300));
     }
 
@@ -406,10 +441,11 @@ mod tests {
         assert_eq!(
             args.expect("passable ids"),
             strings(&[
-                "gui",
-                "tail",
+                "data",
+                "export",
                 "claude-code:a",
                 "codex:b",
+                "--json",
                 "--max-chars=50000"
             ])
         );
@@ -425,47 +461,63 @@ mod tests {
     }
 
     #[test]
-    fn decide_args_append_flags_in_flag_value_form() {
+    fn decide_args_name_the_guarded_session_verb_for_each_action() {
+        let mtime = "2026-10-16T09:00:00+00:00";
+        let expected: [(DecisionAction, &[&str]); 6] = [
+            (DecisionAction::Archive, &["session", "archive", "codex:b"]),
+            (DecisionAction::Delete, &["session", "delete", "codex:b"]),
+            (
+                DecisionAction::Harvest,
+                &["session", "harvest", "codex:b", "--archive"],
+            ),
+            (DecisionAction::Keep, &["session", "keep", "codex:b"]),
+            (
+                DecisionAction::KeepGoing,
+                &["session", "mark", "reviewed", "codex:b"],
+            ),
+            (DecisionAction::Snooze, &["session", "snooze", "codex:b"]),
+        ];
+        for (action, head) in expected {
+            let mut req = decide_req(action, "codex:b", mtime);
+            req.fingerprint = Some("1:6:4068:17:17".to_string());
+            let mut tail = vec![
+                "--json".to_string(),
+                format!("--if-mtime={mtime}"),
+                "--if-fingerprint=1:6:4068:17:17".to_string(),
+            ];
+            if action == DecisionAction::Snooze {
+                req.until = Some("2026-10-20T07:00:00.000Z".to_string());
+                tail.push("--until=2026-10-20T07:00:00.000Z".to_string());
+            }
+            let want: Vec<String> = strings(head).into_iter().chain(tail).collect();
+            assert_eq!(decide_args(&req).expect("args"), want, "{action:?}");
+        }
+    }
+
+    #[test]
+    fn decide_args_pass_an_empty_mtime_and_omit_a_missing_fingerprint() {
+        let archive = decide_req(DecisionAction::Archive, "codex:b", "");
+        assert_eq!(
+            decide_args(&archive).expect("args"),
+            strings(&["session", "archive", "codex:b", "--json", "--if-mtime="])
+        );
         let mut snooze = decide_req(
             DecisionAction::Snooze,
             "claude-code:a",
             "2026-10-16T09:00:00+00:00",
         );
         snooze.until = Some("2026-10-20T07:00:00.000Z".to_string());
-        let args = decide_args(&snooze).expect("args");
         assert_eq!(
-            args,
+            decide_args(&snooze).expect("args"),
             strings(&[
-                "gui",
-                "decide",
+                "session",
                 "snooze",
                 "claude-code:a",
-                "--mtime=2026-10-16T09:00:00+00:00",
+                "--json",
+                "--if-mtime=2026-10-16T09:00:00+00:00",
                 "--until=2026-10-20T07:00:00.000Z",
             ])
         );
-        assert_eq!(
-            args.iter()
-                .filter(|a| a.starts_with("--fingerprint"))
-                .count(),
-            0
-        );
-
-        let mut archive = decide_req(DecisionAction::Archive, "codex:b", "");
-        archive.fingerprint = Some("1:6:4068:17:17".to_string());
-        assert_eq!(
-            decide_args(&archive).expect("args"),
-            strings(&[
-                "gui",
-                "decide",
-                "archive",
-                "codex:b",
-                "--mtime=",
-                "--fingerprint=1:6:4068:17:17"
-            ])
-        );
-        let keep_going = decide_req(DecisionAction::KeepGoing, "codex:b", "");
-        assert_eq!(decide_args(&keep_going).expect("args")[2], "keep_going");
     }
 
     #[test]
@@ -515,7 +567,7 @@ mod tests {
         ] {
             assert!(valid_session_id(id), "{id:?}");
             assert_eq!(
-                decide_args(&decide_req(DecisionAction::Keep, id, ok)).expect("passes")[3],
+                decide_args(&decide_req(DecisionAction::Keep, id, ok)).expect("passes")[2],
                 id
             );
         }
@@ -575,10 +627,11 @@ mod tests {
         assert_eq!(
             rl.runner.recorded()[0].args,
             strings(&[
-                "gui",
-                "tail",
+                "data",
+                "export",
                 "claude-code:a",
                 "codex:b",
+                "--json",
                 "--max-chars=50000"
             ])
         );
@@ -608,7 +661,7 @@ mod tests {
             TAILS
         );
         assert_eq!(
-            parse_document(output(SCAN, 0, ""), "scan").expect("scan"),
+            parse_document(output(SCAN, 0, ""), "list").expect("scan"),
             SCAN
         );
         assert_eq!(
@@ -621,6 +674,99 @@ mod tests {
     fn parse_document_rejects_the_wrong_kind() {
         let error = parse_document(output(LIST, 0, ""), "tails").expect_err("wrong kind");
         assert_eq!(error.kind, ErrorKind::BadOutput);
+    }
+
+    #[test]
+    fn scan_accepts_a_list_document_and_rejects_a_scan_document() {
+        let rl = client(FakeRunner::returning(SCAN));
+        assert_eq!(rl.scan().expect("scan"), SCAN);
+        let old_scan = br#"{"version":1,"kind":"scan","scanned_at":"2026-10-17T08:00:00+00:00","added":0,"removed":0,"unavailable_sources":[]}"#;
+        let rl = client(FakeRunner::returning(old_scan));
+        let error = rl.scan().expect_err("scan kind");
+        assert_eq!(error.kind, ErrorKind::BadOutput);
+        assert_eq!(error.message, "expected a list document, got scan");
+    }
+
+    #[test]
+    fn an_rl_without_the_json_commands_is_too_old() {
+        let usage = "usage: rl inbox [-h] [--read-only]\n";
+        for stderr in [
+            format!("{usage}rl inbox: error: unrecognized arguments: --json"),
+            format!("{usage}rl inbox: error: unrecognized arguments: --json --scan"),
+            format!(
+                "{usage}rl session archive: error: unrecognized arguments: --json --if-mtime=x"
+            ),
+            "rl: unknown command 'inbox'\nusage: rl ...".to_string(),
+            "rl: unknown command 'data'\nusage: rl ...".to_string(),
+            "rl: unknown command 'reviewed' in 'rl session mark'\nusage: rl ...".to_string(),
+        ] {
+            let error = parse_document(output(b"", 2, &stderr), "list").expect_err("too old");
+            assert_eq!(error.kind, ErrorKind::RlTooOld, "{stderr:?}");
+            assert!(error.message.contains("too old for circus"));
+        }
+    }
+
+    #[test]
+    fn every_command_token_circus_passes_is_a_contract_command() {
+        let id = "codex:b";
+        let actions = [
+            DecisionAction::Harvest,
+            DecisionAction::Archive,
+            DecisionAction::Delete,
+            DecisionAction::Snooze,
+            DecisionAction::Keep,
+            DecisionAction::KeepGoing,
+        ];
+        let mut argvs = vec![
+            list_args(),
+            scan_args(),
+            tails_args(&tails_req(&[id], 2000))
+                .expect("args")
+                .expect("passable"),
+        ];
+        for action in actions {
+            match action {
+                DecisionAction::Harvest
+                | DecisionAction::Archive
+                | DecisionAction::Delete
+                | DecisionAction::Snooze
+                | DecisionAction::Keep
+                | DecisionAction::KeepGoing => {}
+            }
+            let mut req = decide_req(action, id, "2026-10-16T09:00:00+00:00");
+            if action == DecisionAction::Snooze {
+                req.until = Some("2026-10-20T07:00:00.000Z".to_string());
+            }
+            argvs.push(decide_args(&req).expect("args"));
+        }
+        for argv in argvs {
+            for token in argv.iter().filter(|t| !t.starts_with("--") && *t != id) {
+                assert!(
+                    CONTRACT_COMMANDS.contains(&token.as_str()),
+                    "{token:?} from {argv:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn other_usage_errors_are_failures_with_the_stderr_tail() {
+        let bogus = "usage: rl inbox\nrl inbox: error: unrecognized arguments: --bogus";
+        let error = parse_document(output(b"", 2, bogus), "list").expect_err("usage");
+        assert_eq!(error.kind, ErrorKind::Failed);
+        assert_eq!(error.exit_code, Some(2));
+        assert_eq!(error.stderr_tail.as_deref(), Some(bogus));
+
+        let unknown = "rl: unknown command 'gui'\nusage: rl ...";
+        let error = parse_document(output(b"", 2, unknown), "list").expect_err("gui");
+        assert_eq!(error.kind, ErrorKind::Failed);
+
+        let noisy = "rl inbox: error: unrecognized arguments: --json";
+        let error = parse_document(output(b"partial", 2, noisy), "list").expect_err("stdout");
+        assert_eq!(error.kind, ErrorKind::Failed);
+
+        let exit_one = parse_document(output(b"", 1, noisy), "list").expect_err("exit 1");
+        assert_eq!(exit_one.kind, ErrorKind::Failed);
     }
 
     #[test]
@@ -640,13 +786,6 @@ mod tests {
 
     #[test]
     fn parse_document_maps_process_failures() {
-        let too_old = parse_document(
-            output(b"", 2, "rl: unknown command 'gui'\nusage: rl ..."),
-            "list",
-        )
-        .expect_err("too old");
-        assert_eq!(too_old.kind, ErrorKind::RlTooOld);
-
         let crashed = parse_document(
             output(b"", 1, "Traceback (most recent call last):\nboom"),
             "list",

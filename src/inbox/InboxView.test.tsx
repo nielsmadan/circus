@@ -214,6 +214,7 @@ describe('InboxView list and reading pane', () => {
     await renderInbox(makeList(ROWS), (fake) => {
       fake.setDefault('cachedList', () => Promise.resolve(makeList([parser, login, docs])));
       held.list = fake.defer('list');
+      fake.defer('scan');
     });
     expect(shownIds()).toEqual([parser.id, login.id, docs.id]);
     expect(screen.getByText('Cached · refreshing…')).toBeInTheDocument();
@@ -580,6 +581,7 @@ describe('InboxView banners and load states', () => {
     const message = 'Could not find rl. Set CIRCUS_RL or rl_command in /u/settings.json';
     await renderInbox(makeList(ROWS), (fake) => {
       fake.setDefault('list', () => Promise.reject(circusError('rl_not_found', message)));
+      fake.setDefault('scan', () => Promise.reject(circusError('rl_not_found', message)));
     });
     expect(screen.getByRole('alert')).toHaveTextContent(message);
     expect(screen.queryByRole('listbox', { name: 'Sessions' })).toBeNull();
@@ -589,6 +591,7 @@ describe('InboxView banners and load states', () => {
     const message = 'rl is too old for circus — run `just install` in ringleader';
     await renderInbox(makeList(ROWS), (fake) => {
       fake.setDefault('list', () => Promise.reject(circusError('rl_too_old', message)));
+      fake.setDefault('scan', () => Promise.reject(circusError('rl_too_old', message)));
     });
     expect(screen.getByRole('alert')).toHaveTextContent(message);
   });
@@ -598,6 +601,7 @@ describe('InboxView banners and load states', () => {
     await renderInbox(makeList(ROWS), (fake) => {
       fake.setDefault('cachedList', () => Promise.resolve(makeList([parser])));
       fake.setDefault('list', () => Promise.reject(circusError('rl_not_found', message)));
+      fake.setDefault('scan', () => Promise.reject(circusError('rl_not_found', message)));
     });
     expect(shownIds()).toEqual([parser.id]);
     expect(screen.getByRole('alert')).toHaveTextContent(message);
@@ -605,10 +609,10 @@ describe('InboxView banners and load states', () => {
 
   it('offers Retry for other load errors', async () => {
     await renderInbox(makeList(ROWS), (fake) => {
-      fake.fail('list', circusError('failed', 'rl gui list exited with 2'));
-      fake.fail('list', circusError('failed', 'rl gui list exited with 2'));
+      fake.fail('list', circusError('failed', 'rl exited with code 2'));
+      fake.fail('scan', circusError('failed', 'rl exited with code 2'));
     });
-    expect(screen.getByRole('alert')).toHaveTextContent('rl gui list exited with 2');
+    expect(screen.getByRole('alert')).toHaveTextContent('rl exited with code 2');
     const before = api.count('list');
     click(screen.getByRole('button', { name: 'Retry' }));
     await flush();

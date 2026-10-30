@@ -1,6 +1,6 @@
 manifest := "src-tauri/Cargo.toml"
-ringleader := env_var_or_default("CIRCUS_RINGLEADER", "../circus-worktrees/ringleader")
-golden_names := "gui-list.json gui-tails.json gui-outcome-ok.json gui-outcome-refused.json"
+ringleader := env_var_or_default("CIRCUS_RINGLEADER", "../../ringleader/dev2")
+golden_names := "contract-list.json contract-tails.json contract-outcome-ok.json contract-outcome-refused.json"
 
 [private]
 default:
@@ -65,10 +65,10 @@ doctor:
         printf '  MISSING  %-12s run: just setup\n' 'git hooks'; fail=1
     fi
     warn uv "https://docs.astral.sh/uv/getting-started/installation/"
-    if [ -d ../circus-worktrees/ringleader ]; then
-        printf '  ok       ../circus-worktrees/ringleader\n'
+    if [ -d "{{ringleader}}" ]; then
+        printf '  ok       %s\n' "{{ringleader}}"
     else
-        printf '  warn     %-12s needed for the sandbox recipes\n' '../circus-worktrees/ringleader'
+        printf '  warn     %-12s needed for the sandbox recipes\n' "{{ringleader}}"
     fi
     if {{just_executable()}} --justfile {{justfile()}} golden-check >/dev/null 2>&1; then
         printf '  ok       golden documents\n'
@@ -125,13 +125,13 @@ dev-sandbox: ensure-dist
     source scripts/sandbox-env.sh
     pnpm tauri dev
 
-# Copy ringleader's golden `rl gui` documents into src/test/golden.
+# Copy ringleader's golden contract documents into src/test/golden.
 sync-golden:
     #!/usr/bin/env bash
     set -euo pipefail
     source_dir="{{ringleader}}/tests/golden"
     shopt -s nullglob
-    files=("$source_dir"/gui-*.json)
+    files=("$source_dir"/contract-*.json)
     if [ "${#files[@]}" -eq 0 ]; then
         echo "no golden documents in $source_dir" >&2
         exit 1
@@ -147,7 +147,7 @@ golden-check:
     source_dir="{{ringleader}}/tests/golden"
     shopt -s nullglob
     names=({{golden_names}})
-    for file in "$source_dir"/gui-*.json; do
+    for file in "$source_dir"/contract-*.json; do
         names+=("$(basename "$file")")
     done
     for name in $(printf '%s\n' "${names[@]}" | sort -u); do
@@ -158,7 +158,7 @@ golden-check:
     done
     echo "golden documents are current"
 
-# Run the Rust client against real `rl gui` in a freshly built synthetic world.
+# Run the Rust client against a real `rl` in a freshly built synthetic world.
 smoke-sandbox: golden-check ensure-dist
     #!/usr/bin/env bash
     set -euo pipefail

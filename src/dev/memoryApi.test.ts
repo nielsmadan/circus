@@ -33,6 +33,21 @@ afterEach(() => {
 });
 
 describe('createMemoryApi', () => {
+  it('answers a scan with the current list and a scan summary', async () => {
+    const api = createMemoryApi(seed, { latencyMs: 150 });
+    const scan = api.scan();
+    await vi.advanceTimersByTimeAsync(300);
+    const doc = await scan;
+    expect(doc.kind).toBe('list');
+    expect(doc.sessions.map((row) => row.id)).toEqual([rowA.id, rowEmpty.id, rowOther.id]);
+    expect(doc.scan).toEqual({
+      scanned_at: doc.generated_at,
+      added: 0,
+      removed: 0,
+      unavailable_sources: [],
+    });
+  });
+
   it('returns tails in request order after the latency', async () => {
     const api = createMemoryApi(seed, { latencyMs: 150 });
     let settled = false;

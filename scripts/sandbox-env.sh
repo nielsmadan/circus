@@ -1,5 +1,5 @@
 # Sourced from the repo root by recipes running `set -euo pipefail`; builds the synthetic world.
-RL_PROJECT="${CIRCUS_RINGLEADER:-$PWD/../circus-worktrees/ringleader}"
+RL_PROJECT="${CIRCUS_RINGLEADER:-$PWD/../../ringleader/dev2}"
 [ -f "$RL_PROJECT/scripts/gui_world.py" ] || { echo "sandbox: $RL_PROJECT/scripts/gui_world.py not found (set CIRCUS_RINGLEADER)" >&2; exit 1; }
 mkdir -p "$PWD/.local/sandbox"
 WORLD="$(cd "$PWD/.local/sandbox" && pwd -P)/world"

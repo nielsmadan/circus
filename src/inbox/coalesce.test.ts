@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createFlight, type Landed } from './coalesce';
+import { createFlight, createSequence, createSequencedFlight, type Landed } from './coalesce';
 
 function deferred<T>() {
   let resolve: (value: T) => void = () => undefined;
@@ -81,5 +81,33 @@ describe('createFlight', () => {
     await settle();
     expect(seen).toEqual([1, 2]);
     expect(report).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('createSequence', () => {
+  it('numbers runs across flights that share it while each flight keeps its own lastStarted', async () => {
+    const sequence = createSequence();
+    const landed: string[] = [];
+    const a = createSequencedFlight(
+      (arg: string) => Promise.resolve(arg),
+      (l) => landed.push(`${l.arg}:${l.seq}`),
+      sequence,
+    );
+    const b = createSequencedFlight(
+      (arg: string) => Promise.resolve(arg),
+      (l) => landed.push(`${l.arg}:${l.seq}`),
+      sequence,
+    );
+    expect(sequence.lastStarted).toBe(0);
+    a.request('a1');
+    b.request('b1');
+    a.request('a2');
+    expect(sequence.lastStarted).toBe(2);
+    expect(a.lastStarted).toBe(1);
+    expect(b.lastStarted).toBe(2);
+    await settle();
+    expect(a.lastStarted).toBe(3);
+    expect(sequence.lastStarted).toBe(3);
+    expect(landed).toEqual(['a1:1', 'b1:2', 'a2:3']);
   });
 });

@@ -2,13 +2,13 @@
 
 ## Setup
 
-`just setup` installs dependencies (`pnpm install --frozen-lockfile`), the lefthook git hooks, and runs `just doctor`. The doctor checks Node 24, pnpm, cargo, rustup components, lefthook, just, the sibling `../shortcutkit-js/packages/core/src/index.ts`, git hooks, the ringleader worktree (warning only) and the golden documents (warning only), and prints a content hash of the linked `@shortcutkit/core` source because that checkout has no pinned version.
+`just setup` installs dependencies (`pnpm install --frozen-lockfile`), the lefthook git hooks, and runs `just doctor`. The doctor checks Node 24, pnpm, cargo, rustup components, lefthook, just, the sibling `../shortcutkit-js/packages/core/src/index.ts`, git hooks, the ringleader checkout (warning only) and the golden documents (warning only), and prints a content hash of the linked `@shortcutkit/core` source because that checkout has no pinned version.
 
 `just check` is the gate: prettier, eslint, tsc, vitest, vite build, `cargo fmt --check`, clippy `-D warnings`, cargo test, and the `sandbox-env.sh` test. CI runs the same recipe.
 
 ## The sandbox world
 
-`just dev-sandbox` and `just smoke-sandbox` source `scripts/sandbox-env.sh`, which builds a synthetic world under `.local/sandbox/world` with ringleader's `scripts/gui_world.py` (`uv run --project ../circus-worktrees/ringleader`; override with `CIRCUS_RINGLEADER`) and exports its environment. The script aborts unless every world variable (`XDG_DATA_HOME`, `XDG_STATE_HOME`, `SESSION_TRACKER_PROJECTS_DIR`, `CODEX_SESSIONS_DIR`, `PI_SESSIONS_DIR`, `FACTORY_HOME_OVERRIDE`, `RINGLEADER_CLAUDE_SETTINGS`) lies under the world root and `PATH` starts with the world's `bin/`.
+`just dev-sandbox` and `just smoke-sandbox` source `scripts/sandbox-env.sh`, which builds a synthetic world under `.local/sandbox/world` with ringleader's `scripts/gui_world.py` (`uv run --project ../../ringleader/dev2`; override with `CIRCUS_RINGLEADER`) and exports its environment. The script aborts unless every world variable (`XDG_DATA_HOME`, `XDG_STATE_HOME`, `SESSION_TRACKER_PROJECTS_DIR`, `CODEX_SESSIONS_DIR`, `PI_SESSIONS_DIR`, `FACTORY_HOME_OVERRIDE`, `RINGLEADER_CLAUDE_SETTINGS`) lies under the world root and `PATH` starts with the world's `bin/`.
 
 The world holds:
 
@@ -17,15 +17,15 @@ The world holds:
 - a `claude` stub that exits 97, so the real one can never run;
 - dry-run resume (`CIRCUS_RESUME_DRY_RUN=1`): the resume toast shows the command instead of opening iTerm2.
 
-The world is rebuilt on every launch, so a sandbox launch starts without a list cache. The sandbox also sets `CIRCUS_RL` to the worktree's `.venv/bin/rl` (run `uv sync` there once), `CIRCUS_ENV_LABEL=sandbox` (SANDBOX badge, decision guard) and `CIRCUS_WORLD_ROOT`.
+The world is rebuilt on every launch, so a sandbox launch starts without a list cache. The sandbox also sets `CIRCUS_RL` to the ringleader checkout's `.venv/bin/rl` (run `uv sync` there once), `CIRCUS_ENV_LABEL=sandbox` (SANDBOX badge, decision guard) and `CIRCUS_WORLD_ROOT`.
 
-`just smoke-sandbox` runs `golden-check`, then the ignored Rust test `contract_smoke` against real `rl gui` in the world. Never run `rl` or `python -m ringleader` outside these recipes.
+`just smoke-sandbox` runs `golden-check`, then the ignored Rust test `contract_smoke` against real `rl` in the world. Never run `rl` or `python -m ringleader` outside these recipes.
 
 ## The fake harness
 
 `pnpm dev:fake` serves the whole Inbox in a plain browser over the in-memory API in `src/dev/memoryApi.ts`: list, reading pane, all six decisions with undo, snooze dialog, dry-run resume toast, ⌘K palette. No Tauri, no `rl`. It is what agent-browser drives.
 
-The fake decides as `rl gui decide` does, so QA in the harness sees real outcomes: archive, delete and harvest are refused without a five-field numeric fingerprint (the synthetic rows carry real-shaped ones), then for a lifecycle block (`cannot <action> …`), a session that left the registry or a changed `mtime`, then for a running or presence-unknown session, in that order; keep and keep going on a missing session are `failed`; a snooze without `until` is rejected as `invalid_argument` the way Rust rejects it, and an unparsable, offset-less or past `until` is refused.
+The fake decides as the guarded `rl session` verbs do, so QA in the harness sees real outcomes: archive, delete and harvest are refused without a five-field numeric fingerprint (the synthetic rows carry real-shaped ones), then for a lifecycle block (`cannot <action> …`), a session that left the registry or a changed `mtime`, then for a running or presence-unknown session, in that order; keep and keep going on a missing session are `failed`; a snooze without `until` is rejected as `invalid_argument` the way Rust rejects it, and an unparsable, offset-less or past `until` is refused.
 
 - `VITE_FAKE_ROWS` — synthetic row count (default 2000)
 - `VITE_FAKE_LATENCY_MS` — simulated latency per call (default 150)
@@ -57,13 +57,13 @@ Measure in the fake harness (dev-only marks from `src/inbox/perfMarks.ts`, absen
 3. Read `performance.getEntriesByType('measure')` through agent-browser's JS evaluation and take the median of the `select-to-paint:*` and `select-to-pane:*` durations. For a prefetched tail the pane measure should land in the same frame as the paint measure.
 4. Cold first paint: reload with the cache on (`VITE_FAKE_CACHE` unset) and read the first row's appearance time relative to `performance.timeOrigin`. In `Circus.app`, relaunch after one successful list and check the list is visible immediately with the "Cached · refreshing…" chip.
 
-Budget tests: `pnpm test` runs every `*.perf.test.ts*` (derive chain, `indexRows`, `parseSnooze`, one `j` keypress re-render count). Ringleader's budgets are in its `tests/test_gui_perf.py` (`uv run python -m pytest tests/test_gui_perf.py` there). The thresholds are requirements; fix the code rather than the number.
+Budget tests: `pnpm test` runs every `*.perf.test.ts*` (derive chain, `indexRows`, `parseSnooze`, one `j` keypress re-render count) in a second vitest pass with `--no-file-parallelism`, after the rest of the suite, so sibling test workers do not compete for the CPU they measure. Ringleader's budgets are in its `tests/test_contract_perf.py` (`uv run python -m pytest tests/test_contract_perf.py` there). The thresholds are requirements; fix the code rather than the number.
 
-Next lever: if cold `rl` spawns (about 100–300 ms per call) still feel slow, the next step is a persistent `rl gui serve` sidecar speaking the same documents over stdin/stdout. It is deliberately not built.
+Next lever: if cold `rl` spawns (about 100–300 ms per call) still feel slow, the next step is a persistent sidecar speaking the same documents over stdin/stdout. It is deliberately not built.
 
 ## Changing the contract
 
-1. Change ringleader's `docs/tech/gui-contract.md`, implementation and golden documents (`tests/golden/gui-*.json`) there.
+1. Change ringleader's `docs/tech/json-contract.md`, implementation and golden documents (`tests/golden/contract-*.json`) there.
 2. Run `just sync-golden` here; update `src/api/types.ts`, the Rust `Envelope` and fixtures if the version or shapes changed.
 3. Run `just check` and `just smoke-sandbox`. `just golden-check` fails when the copies drift.
 
@@ -78,6 +78,6 @@ These need the native window and are run by hand; agents do not run them. Use th
 5. With a pending decision, ⌘Q and the red button show "Finishing…" and quit after it completes.
 6. With a pending decision, Dock › Quit quits at once; the row is back on the next launch.
 7. `just build-debug` produces `src-tauri/target/debug/bundle/macos/Circus.app` (unsigned).
-8. One real resume from `Circus.app`, without `CIRCUS_RESUME_DRY_RUN`, against an `rl` installed from the ringleader branch (`just install` there; set `rl_command` in settings if it is not on the login shell's PATH): iTerm2 opens and macOS prompts for Automation. Denying it shows the hint naming System Settings › Privacy & Security › Automation.
+8. One real resume from `Circus.app`, without `CIRCUS_RESUME_DRY_RUN`, against an `rl` installed from a ringleader checkout that has the `--json` commands (`just install` there; set `rl_command` in settings if it is not on the login shell's PATH): iTerm2 opens and macOS prompts for Automation. Denying it shows the hint naming System Settings › Privacy & Security › Automation.
 9. Relaunch `Circus.app` after a successful list: the list paints immediately with the "Cached · refreshing…" chip, which disappears when the live list lands.
 10. Hold `j` over a long list: it scrolls smoothly and the reading pane follows.

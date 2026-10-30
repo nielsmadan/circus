@@ -10,7 +10,6 @@ import {
   type DecideRequest,
   type ListResponse,
   type ResumeLaunch,
-  type ScanResponse,
   type TailsResponse,
 } from './types';
 
@@ -41,7 +40,7 @@ export function decodeDocument(raw: unknown): unknown {
 
 export interface CircusApi {
   list(): Promise<ListResponse>;
-  scan(): Promise<ScanResponse>;
+  scan(): Promise<ListResponse>;
   tails(ids: readonly string[]): Promise<TailsResponse>;
   cachedList(): Promise<ListResponse | null>;
   decide(request: DecideRequest): Promise<DecideOutcome>;
@@ -95,7 +94,7 @@ export function createCircusApi(
 
   return {
     list: async () => (await document('rl_list', {})) as ListResponse,
-    scan: async () => (await document('rl_scan', {})) as ScanResponse,
+    scan: async () => (await document('rl_scan', {})) as ListResponse,
     tails: async (ids) => {
       if (ids.length === 0 || ids.length > TAIL_MAX_IDS) {
         throw circusError('invalid_argument', `tails takes 1 to ${TAIL_MAX_IDS} ids`);

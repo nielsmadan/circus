@@ -36,7 +36,7 @@ fn text(value: &Value, key: &str) -> String {
 
 #[test]
 #[ignore = "needs the synthetic world; run by `just smoke-sandbox`"]
-fn rl_gui_contract_against_the_sandbox_world() {
+fn rl_json_contract_against_the_sandbox_world() {
     let (rl, world) = sandbox_client();
 
     let first = json(&rl.list().expect("first list"));
@@ -46,11 +46,25 @@ fn rl_gui_contract_against_the_sandbox_world() {
         "registry {registry} is outside the world {world}; refusing to write"
     );
 
-    let scan = json(&rl.scan().expect("scan"));
-    assert_eq!(scan["kind"], "scan");
+    assert_eq!(first["scan"], Value::Null);
+
+    let scanned = json(&rl.scan().expect("scan"));
+    assert_eq!(scanned["kind"], "list");
+    let summary = &scanned["scan"];
+    assert!(summary["scanned_at"].is_string(), "{summary}");
+    assert!(summary["added"].is_u64(), "{summary}");
+    assert!(summary["removed"].is_u64(), "{summary}");
+    assert!(summary["unavailable_sources"].is_array(), "{summary}");
 
     let rows = sessions(&json(&rl.list().expect("list after scan")));
     assert!(!rows.is_empty(), "the world has sessions");
+    assert_eq!(
+        rows.iter().map(|row| text(row, "id")).collect::<Vec<_>>(),
+        sessions(&scanned)
+            .iter()
+            .map(|row| text(row, "id"))
+            .collect::<Vec<_>>()
+    );
 
     let pair: Vec<&Value> = rows.iter().take(2).collect();
     let ids: Vec<String> = pair.iter().map(|row| text(row, "id")).collect();

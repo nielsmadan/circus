@@ -56,12 +56,11 @@ export interface ListResponse {
     stale: boolean;
     stale_hours: number;
   };
+  scan?: ScanSummary | null;
   sessions: SessionRow[];
 }
 
-export interface ScanResponse {
-  version: 1;
-  kind: 'scan';
+export interface ScanSummary {
   scanned_at: string;
   added: number;
   removed: number;
@@ -141,6 +140,7 @@ export const LIST_RESPONSE_KEYS = [
   'recent_days',
   'registry',
   'roundup',
+  'scan',
   'sessions',
   'version',
 ] as const satisfies readonly (keyof ListResponse)[];

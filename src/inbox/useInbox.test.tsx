@@ -2,9 +2,9 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CircusError, DecideOutcome, DecideRequest, SessionRow } from '../api/types';
 import { createFakeApi, NATIVE_INFO, okOutcome, type FakeApi } from '../test/fakeApi';
-import { makeList, makeRow } from '../test/fixtures';
+import { makeList, makeRow, makeScanSummary } from '../test/fixtures';
 import type { Settled } from './outbox';
-import { settleEffects, useInbox } from './useInbox';
+import { landList, settleEffects, useInbox, type LandedList } from './useInbox';
 
 const rowA = makeRow({ id: 'claude-code:a', session_id: 'a', label: 'fix flaky login' });
 const rowB = makeRow({
@@ -17,6 +17,10 @@ const rowC = makeRow({ id: 'claude-code:c', session_id: 'c', label: 'docs pass' 
 
 function circusError(kind: CircusError['kind'], message = 'boom'): CircusError {
   return { kind, message, exit_code: null, stderr_tail: null };
+}
+
+function scanList(rows: readonly SessionRow[], sources: string[] = []) {
+  return makeList(rows, { scan: makeScanSummary({ unavailable_sources: sources }) });
 }
 
 function outcome(request: DecideRequest, overrides: Partial<DecideOutcome>): DecideOutcome {
@@ -55,10 +59,10 @@ afterEach(() => {
 });
 
 describe('useInbox loading', () => {
-  it('loads cache, app info, list and scan, then lists again after the scan', async () => {
+  it('loads cache, app info, list and scan, and adopts the scan list without listing again', async () => {
     const api = createFakeApi(makeList([rowA, rowB]));
     const { result } = await mountInbox(api);
-    expect(methods(api)).toEqual(['cachedList', 'appInfo', 'list', 'scan', 'list']);
+    expect(methods(api)).toEqual(['cachedList', 'appInfo', 'list', 'scan']);
     expect(result.current.info).toEqual(NATIVE_INFO);
     expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id]);
     expect(result.current.scanning).toBe(false);
@@ -67,7 +71,7 @@ describe('useInbox loading', () => {
   it('loads once and listens once under StrictMode', async () => {
     const api = createFakeApi(makeList([rowA]));
     const { result } = await mountInbox(api, { strict: true });
-    expect(methods(api)).toEqual(['cachedList', 'appInfo', 'list', 'scan', 'list']);
+    expect(methods(api)).toEqual(['cachedList', 'appInfo', 'list', 'scan']);
     expect(api.listening).toBe(true);
     expect(api.argsOf('setPending').at(-1)).toEqual([0]);
     expect(ids(result.current.rows)).toEqual([rowA.id]);
@@ -77,6 +81,7 @@ describe('useInbox loading', () => {
     const api = createFakeApi(makeList([rowA, rowB]));
     api.reply('cachedList', makeList([rowA, rowB, rowC]));
     const live = api.defer('list');
+    api.defer('scan');
     const { result } = await mountInbox(api);
     expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id, rowC.id]);
     expect(result.current.listStale).toBe(true);
@@ -136,32 +141,17 @@ describe('useInbox loading', () => {
     expect(result.current.scanning).toBe(true);
     act(() => result.current.rescan());
     expect(texts(result)).toContain('Rescan queued');
-    startup.resolve({
-      version: 1,
-      kind: 'scan',
-      scanned_at: '',
-      added: 0,
-      removed: 0,
-      unavailable_sources: [],
-    });
+    startup.resolve(scanList([rowA]));
     await flush();
     expect(api.count('scan')).toBe(2);
-    expect(api.count('list')).toBe(3);
+    expect(api.count('list')).toBe(1);
   });
 
   it('warns once per set of unavailable sources', async () => {
     const api = createFakeApi(makeList([rowA]));
-    const scan = (sources: string[]) => ({
-      version: 1 as const,
-      kind: 'scan' as const,
-      scanned_at: '',
-      added: 0,
-      removed: 0,
-      unavailable_sources: sources,
-    });
-    api.reply('scan', scan(['codex', 'pi']));
-    api.reply('scan', scan(['codex', 'pi']));
-    api.reply('scan', scan(['codex']));
+    api.reply('scan', scanList([rowA], ['codex', 'pi']));
+    api.reply('scan', scanList([rowA], ['codex', 'pi']));
+    api.reply('scan', scanList([rowA], ['codex']));
     const { result } = await mountInbox(api);
     const warnings = () => texts(result).filter((t) => t.startsWith('Sources unavailable'));
     expect(warnings()).toEqual(['Sources unavailable: codex, pi']);
@@ -173,27 +163,226 @@ describe('useInbox loading', () => {
     expect(warnings()).toEqual(['Sources unavailable: codex, pi', 'Sources unavailable: codex']);
   });
 
+  it('warns once when a plain list lands between two scans with the same unavailable sources', async () => {
+    const api = createFakeApi(makeList([rowA]));
+    api.reply('scan', scanList([rowA], ['codex']));
+    api.reply('scan', scanList([rowA], ['codex']));
+    const { result } = await mountInbox(api);
+    act(() => result.current.refresh());
+    await flush();
+    act(() => result.current.rescan());
+    await flush();
+    expect(api.count('list')).toBe(2);
+    expect(api.count('scan')).toBe(2);
+    expect(texts(result).filter((t) => t.startsWith('Sources unavailable'))).toEqual([
+      'Sources unavailable: codex',
+    ]);
+  });
+
   it('shows a warning when a scan fails and keeps the list', async () => {
     const api = createFakeApi(makeList([rowA]));
     api.fail('scan', circusError('timeout', 'scan took too long'));
     const { result } = await mountInbox(api);
     expect(texts(result)).toContain('Rescan failed: scan took too long');
+    expect(result.current.loadError).toBeNull();
     expect(ids(result.current.rows)).toEqual([rowA.id]);
   });
 
   it('refetches on focus once the last list is older than a minute', async () => {
     const api = createFakeApi(makeList([rowA]));
     await mountInbox(api);
-    expect(api.count('list')).toBe(2);
+    expect(api.count('list')).toBe(1);
     act(() => {
       window.dispatchEvent(new Event('focus'));
     });
-    expect(api.count('list')).toBe(2);
+    expect(api.count('list')).toBe(1);
     await advance(60_001);
     act(() => {
       window.dispatchEvent(new Event('focus'));
     });
+    expect(api.count('list')).toBe(2);
+  });
+
+  it('counts a list dropped as stale as a landing for the focus refetch', async () => {
+    const api = createFakeApi(makeList([rowA]));
+    const stale = api.defer('list');
+    const { result } = await mountInbox(api);
+    expect(ids(result.current.rows)).toEqual([rowA.id]);
+    await advance(60_001);
+    stale.resolve(makeList([rowB]));
+    await flush();
+    expect(ids(result.current.rows)).toEqual([rowA.id]);
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    expect(api.count('list')).toBe(1);
+  });
+
+  it('refetches on focus a minute after the first list failed', async () => {
+    const api = createFakeApi(makeList([rowA]));
+    api.fail('list', circusError('timeout', 'list took too long'));
+    api.defer('scan');
+    await mountInbox(api);
+    await advance(60_001);
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    expect(api.count('list')).toBe(2);
+  });
+});
+
+describe('useInbox scan flights', () => {
+  it('lands a rescan list with one scan call and no follow-up list', async () => {
+    const api = createFakeApi(makeList([rowA]));
+    const { result } = await mountInbox(api);
+    const lists = api.count('list');
+    api.reply('scan', scanList([rowA, rowB]));
+    act(() => result.current.rescan());
+    await flush();
+    expect(api.count('scan')).toBe(2);
+    expect(api.count('list')).toBe(lists);
+    expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id]);
+    expect(result.current.scanning).toBe(false);
+  });
+
+  it('starts a list requested during a busy scan immediately', async () => {
+    const api = createFakeApi(makeList([rowA]));
+    const scan = api.defer('scan');
+    const { result } = await mountInbox(api);
+    expect(result.current.scanning).toBe(true);
+    api.reply('list', makeList([rowB]));
+    act(() => result.current.refresh());
+    await flush();
+    expect(api.count('list')).toBe(2);
+    expect(ids(result.current.rows)).toEqual([rowB.id]);
+    scan.resolve(scanList([rowA, rowB]));
+    await flush();
+  });
+
+  it('drops a scan list older than an applied list and lists exactly once more', async () => {
+    const api = createFakeApi(makeList([rowA]));
+    const scan = api.defer('scan');
+    const { result } = await mountInbox(api);
+    api.reply('list', makeList([rowB]));
+    act(() => result.current.refresh());
+    await flush();
+    expect(ids(result.current.rows)).toEqual([rowB.id]);
+    api.setList(makeList([rowC]));
+    scan.resolve(scanList([rowA, rowB]));
+    await flush();
     expect(api.count('list')).toBe(3);
+    expect(api.count('scan')).toBe(1);
+    expect(ids(result.current.rows)).toEqual([rowC.id]);
+    expect(result.current.scanning).toBe(false);
+  });
+
+  it('requests a follow-up list when a list started after the scan is still in flight', async () => {
+    const api = createFakeApi(makeList([rowA]));
+    const scan = api.defer('scan');
+    const { result } = await mountInbox(api);
+    const overlapping = api.defer('list');
+    act(() => result.current.refresh());
+    expect(api.count('list')).toBe(2);
+    const followUp = api.defer('list');
+    scan.resolve(scanList([rowA, rowB, rowC]));
+    await flush();
+    expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id, rowC.id]);
+    overlapping.resolve(makeList([rowA]));
+    await flush();
+    expect(api.count('list')).toBe(3);
+    expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id, rowC.id]);
+    followUp.resolve(makeList([rowA, rowB]));
+    await flush();
+    expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id]);
+  });
+
+  it('lists no more after a scan when the list started after it has already failed', async () => {
+    const api = createFakeApi(makeList([rowA]));
+    const scan = api.defer('scan');
+    const { result } = await mountInbox(api);
+    api.fail('list', circusError('timeout', 'list took too long'));
+    act(() => result.current.refresh());
+    await flush();
+    expect(result.current.loadError?.message).toBe('list took too long');
+    scan.resolve(scanList([rowA, rowB]));
+    await flush();
+    expect(api.count('list')).toBe(2);
+    expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id]);
+    expect(result.current.loadError).toBeNull();
+  });
+
+  it('does not show a load error for a failed list older than the applied list', async () => {
+    const api = createFakeApi(makeList([rowA]));
+    const slow = api.defer('list');
+    api.reply('scan', scanList([rowA, rowB]));
+    const { result } = await mountInbox(api);
+    expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id]);
+    slow.reject(circusError('timeout', 'list took too long'));
+    await flush();
+    expect(result.current.loadError).toBeNull();
+    expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id]);
+  });
+
+  it.each([
+    ['succeeds', true],
+    ['fails', false],
+  ])(
+    'keeps a row settled during a scan hidden until a later list lands when the scan %s',
+    async (_name, scanOk) => {
+      const api = createFakeApi(makeList([rowA, rowB]));
+      const { result } = await mountInbox(api);
+      const scan = api.defer('scan');
+      act(() => result.current.rescan());
+      const refetch = api.defer('list');
+      act(() => {
+        result.current.decide('archive', rowA);
+      });
+      await advance(4_000);
+      expect(api.count('decide')).toBe(1);
+      expect(ids(result.current.rows)).toEqual([rowB.id]);
+      if (scanOk) scan.resolve(scanList([rowA, rowB]));
+      else scan.reject(circusError('timeout', 'scan took too long'));
+      await flush();
+      expect(ids(result.current.rows)).toEqual([rowB.id]);
+      refetch.resolve(makeList([rowA, rowB]));
+      await flush();
+      expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id]);
+    },
+  );
+
+  it('never warns about unavailable sources from the cached list', async () => {
+    const api = createFakeApi(makeList([rowA]));
+    api.reply('cachedList', scanList([rowA], ['codex']));
+    api.defer('scan');
+    const { result } = await mountInbox(api);
+    expect(texts(result)).toEqual([]);
+    expect(ids(result.current.rows)).toEqual([rowA.id]);
+  });
+
+  it('renders a cached list that has no scan key', async () => {
+    const api = createFakeApi(makeList([rowA]));
+    const { scan: _scan, ...cached } = makeList([rowA, rowB]);
+    expect('scan' in cached).toBe(false);
+    api.reply('cachedList', cached);
+    api.defer('list');
+    api.defer('scan');
+    const { result } = await mountInbox(api);
+    expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id]);
+    expect(result.current.listStale).toBe(true);
+  });
+
+  it('treats a scan list without a scan summary as no unavailable sources', async () => {
+    const api = createFakeApi(makeList([rowA]));
+    api.reply('scan', scanList([rowA], ['codex']));
+    api.reply('scan', makeList([rowA]));
+    api.reply('scan', scanList([rowA], ['codex']));
+    const { result } = await mountInbox(api);
+    const warnings = () => texts(result).filter((t) => t.startsWith('Sources unavailable'));
+    act(() => result.current.rescan());
+    await flush();
+    act(() => result.current.rescan());
+    await flush();
+    expect(warnings()).toEqual(['Sources unavailable: codex', 'Sources unavailable: codex']);
   });
 });
 
@@ -230,7 +419,7 @@ describe('useInbox decisions', () => {
     before.resolve(makeList([rowA, rowB]));
     await flush();
     expect(ids(result.current.rows)).toEqual([rowB.id]);
-    expect(api.count('list')).toBe(4);
+    expect(api.count('list')).toBe(3);
     after.resolve(makeList([rowA, rowB]));
     await flush();
     expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id]);
@@ -256,7 +445,7 @@ describe('useInbox decisions', () => {
     expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id]);
     expect(texts(result)).toContain('changed since you looked — rescanning to pick up the change');
     expect(api.count('scan')).toBe(2);
-    expect(methods(api).slice(-4)).toEqual(['decide', 'list', 'scan', 'list']);
+    expect(methods(api).slice(-3)).toEqual(['decide', 'list', 'scan']);
   });
 
   it('restores the row and lists without a rescan after another refusal', async () => {
@@ -285,7 +474,7 @@ describe('useInbox decisions', () => {
   it('keeps the row hidden and refreshes when the result is unknown', async () => {
     const api = createFakeApi(makeList([rowA, rowB]));
     const { result } = await mountInbox(api);
-    api.fail('decide', circusError('timeout', 'rl gui decide timed out'));
+    api.fail('decide', circusError('timeout', 'rl session archive timed out'));
     api.setList(makeList([rowB]));
     act(() => {
       result.current.decide('archive', rowA);
@@ -623,4 +812,30 @@ describe('settleEffects', () => {
     const effects = settleEffects(input);
     expect([effects.markApplied, effects.refetch, effects.rescan]).toEqual(expected);
   });
+});
+
+describe('landList', () => {
+  const list = (seq: number, ok = true): LandedList => ({ from: 'list', seq, ok });
+  const scan = (seq: number, ok = true): LandedList => ({ from: 'scan', seq, ok });
+
+  it.each([
+    ['a newer list', 3, list(4), null, [true, false, false, 4]],
+    ['a stale list', 4, list(3), null, [false, false, false, 4]],
+    ['a newer failed list', 3, list(4, false), null, [false, false, true, 3]],
+    ['a stale failed list', 4, list(3, false), null, [false, false, false, 4]],
+    ['a newer scan', 3, scan(4), null, [true, false, false, 4]],
+    ['a scan older than the applied list', 5, scan(4), null, [false, true, false, 5]],
+    ['a scan with an older list in flight', 2, scan(4), 3, [true, false, false, 4]],
+    ['a scan with a newer list in flight', 3, scan(4), 5, [true, true, false, 5]],
+    ['a stale scan with a newer list in flight', 5, scan(4), 6, [false, true, false, 6]],
+    ['a failed scan with a newer list in flight', 3, scan(4, false), 5, [false, false, false, 3]],
+  ])(
+    '%s → apply, relist, showError, lastAppliedSeq',
+    (_name, lastAppliedSeq, landed, listInFlightSince, expected) => {
+      const landing = landList(lastAppliedSeq, landed, listInFlightSince);
+      expect([landing.apply, landing.relist, landing.showError, landing.lastAppliedSeq]).toEqual(
+        expected,
+      );
+    },
+  );
 });

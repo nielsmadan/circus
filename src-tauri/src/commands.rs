@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use tauri::ipc::Response;
@@ -11,7 +12,7 @@ use crate::contract::{
     AppInfo, DecideRequest, ResumeLaunch, ResumeRequest, TailsRequest, TerminalKind,
 };
 use crate::error::{CircusError, ErrorKind};
-use crate::process::SystemRunner;
+use crate::process::{ProcessRunner, SystemRunner};
 use crate::resume;
 use crate::rl::RlClient;
 
@@ -53,29 +54,48 @@ where
     move || call(client(resolved.wait(), &settings_path))
 }
 
-#[tauri::command]
-pub async fn rl_list(state: State<'_, AppState>) -> Result<Response, CircusError> {
+#[derive(Clone, Copy)]
+enum ListFetch {
+    Plain,
+    Scan,
+}
+
+fn fetch_list_and_cache<R: ProcessRunner>(
+    rl: &RlClient<R>,
+    fetch: ListFetch,
+    cache_file: Option<&Path>,
+) -> Result<Vec<u8>, CircusError> {
+    let bytes = match fetch {
+        ListFetch::Plain => rl.list(),
+        ListFetch::Scan => rl.scan(),
+    }?;
+    if let Some(path) = cache_file
+        && let Err(error) = cache::write_atomic(path, &bytes)
+    {
+        eprintln!(
+            "circus: could not write the list cache {}: {error}",
+            path.display()
+        );
+    }
+    Ok(bytes)
+}
+
+async fn list_command(state: &AppState, fetch: ListFetch) -> Result<Response, CircusError> {
     let cache_file = state.list_cache.clone();
-    let work = with_client(&state, move |rl| {
-        let bytes = rl.list()?;
-        if let Some(path) = cache_file
-            && let Err(error) = cache::write_atomic(&path, &bytes)
-        {
-            eprintln!(
-                "circus: could not write the list cache {}: {error}",
-                path.display()
-            );
-        }
-        Ok(bytes)
+    let work = with_client(state, move |rl| {
+        fetch_list_and_cache(&rl, fetch, cache_file.as_deref())
     });
     blocking(work).await.map(Response::new)
 }
 
 #[tauri::command]
+pub async fn rl_list(state: State<'_, AppState>) -> Result<Response, CircusError> {
+    list_command(&state, ListFetch::Plain).await
+}
+
+#[tauri::command]
 pub async fn rl_scan(state: State<'_, AppState>) -> Result<Response, CircusError> {
-    blocking(with_client(&state, |rl| rl.scan()))
-        .await
-        .map(Response::new)
+    list_command(&state, ListFetch::Scan).await
 }
 
 #[tauri::command]
@@ -171,5 +191,57 @@ pub fn app_exit(app: AppHandle, state: State<'_, AppState>) {
     let first = lock_gate(&state.close).begin_exit();
     if first {
         app.exit(0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::process::{ProcessOutput, ProcessSpec, RunError};
+    use std::path::PathBuf;
+
+    const LIST: &[u8] = include_bytes!("../tests/fixtures/list.json");
+    const SCAN: &[u8] = include_bytes!("../tests/fixtures/scan.json");
+
+    struct ListRunner;
+
+    impl ProcessRunner for ListRunner {
+        fn run(&self, spec: &ProcessSpec) -> Result<ProcessOutput, RunError> {
+            let scan = spec.args.iter().any(|arg| arg == "--scan");
+            Ok(ProcessOutput {
+                exit_code: Some(0),
+                stdout: if scan { SCAN } else { LIST }.to_vec(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    fn cache_file(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        std::env::temp_dir()
+            .join(format!(
+                "circus-commands-{name}-{}-{nanos}",
+                std::process::id()
+            ))
+            .join(cache::LIST_CACHE_FILE)
+    }
+
+    #[test]
+    fn list_and_scan_write_the_document_they_return_to_the_cache() {
+        let rl = RlClient::new(ListRunner, vec!["rl".to_string()], None, String::new());
+        for (fetch, name, expected) in [
+            (ListFetch::Plain, "list", LIST),
+            (ListFetch::Scan, "scan", SCAN),
+        ] {
+            let path = cache_file(name);
+            let bytes = fetch_list_and_cache(&rl, fetch, Some(&path)).expect(name);
+            assert_eq!(bytes, expected, "{name}");
+            assert_eq!(std::fs::read(&path).expect("cache"), expected, "{name}");
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::remove_dir_all(dir);
+            }
+        }
     }
 }

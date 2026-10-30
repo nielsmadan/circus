@@ -1,8 +1,13 @@
 {
   "version": 1,
-  "kind": "scan",
-  "scanned_at": "2026-10-17T08:00:00+00:00",
-  "added": 2,
-  "removed": 0,
-  "unavailable_sources": ["opencode"]
+  "kind": "list",
+  "generated_at": "2026-10-17T08:00:01+00:00",
+  "registry": "/w/xdg-data/ringleader/registry.json",
+  "scan": {
+    "scanned_at": "2026-10-17T08:00:00+00:00",
+    "added": 2,
+    "removed": 0,
+    "unavailable_sources": ["opencode"]
+  },
+  "sessions": []
 }
