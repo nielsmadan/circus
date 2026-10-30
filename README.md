@@ -17,12 +17,13 @@ Tauri 2, React 19, TypeScript, Rust. Unsigned, no updater; macOS only.
 
 ```sh
 just setup          # dependencies, git hooks, doctor
-just dev-sandbox    # native window against a synthetic world; never touches live data
+just run            # native window against your live sessions, through the installed rl
+just sandbox        # native window against a synthetic world; never touches live data
 pnpm dev:fake       # plain browser, in-memory fake API, no rl
 just build-debug    # src-tauri/target/debug/bundle/macos/Circus.app
 ```
 
-`just check` runs everything CI runs. `just doctor` reports missing tools. There is deliberately no `just dev` against live data.
+`just check` runs everything CI runs. `just doctor` reports missing tools. `just run` needs an `rl` with the `--json` commands on your login shell's PATH (`just install` in the ringleader checkout).
 
 ## Configuration
 

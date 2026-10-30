@@ -23,7 +23,7 @@ Each `--json` call prints exactly one JSON document, `"version": 1`, snake_case 
 
 Exit 0 means the requested document was printed (including refused outcomes); exit 1 carries an `error` document, which Rust reports as error kind `rl_error` with the document's message; an `rl` that predates the contract exits 2 with `unrecognized arguments: --json` or `unknown command` for one of the contract commands, which circus reports as "rl too old".
 
-The source of truth is `docs/tech/json-contract.md` in the ringleader checkout (`../../ringleader/dev2`); this repo does not copy it. The golden documents ringleader generates live in `src/test/golden/` (copied by `just sync-golden`, compared by `just golden-check`) and are parsed by `src/api/golden.test.ts`. Rust fixtures in `src-tauri/tests/fixtures/` pin the envelope handling. To change the contract, change both sides together, then run `just sync-golden` and `just smoke-sandbox`.
+The source of truth is `docs/tech/json-contract.md` in the ringleader checkout (`../../ringleader/dev2`); this repo does not copy it. The golden documents ringleader generates live in `src/test/golden/` (copied by `just sync-golden`, compared by `just golden-check`) and are parsed by `src/api/golden.test.ts`. Rust fixtures in `src-tauri/tests/fixtures/` pin the envelope handling. To change the contract, change both sides together, then run `just sync-golden` and `just test-smoke`.
 
 ## Finding and running `rl`
 

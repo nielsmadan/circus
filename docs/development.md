@@ -8,7 +8,7 @@
 
 ## The sandbox world
 
-`just dev-sandbox` and `just smoke-sandbox` source `scripts/sandbox-env.sh`, which builds a synthetic world under `.local/sandbox/world` with ringleader's `scripts/gui_world.py` (`uv run --project ../../ringleader/dev2`; override with `CIRCUS_RINGLEADER`) and exports its environment. The script aborts unless every world variable (`XDG_DATA_HOME`, `XDG_STATE_HOME`, `SESSION_TRACKER_PROJECTS_DIR`, `CODEX_SESSIONS_DIR`, `PI_SESSIONS_DIR`, `FACTORY_HOME_OVERRIDE`, `RINGLEADER_CLAUDE_SETTINGS`) lies under the world root and `PATH` starts with the world's `bin/`.
+`just sandbox` and `just test-smoke` source `scripts/sandbox-env.sh`, which builds a synthetic world under `.local/sandbox/world` with ringleader's `scripts/gui_world.py` (`uv run --project ../../ringleader/dev2`; override with `CIRCUS_RINGLEADER`) and exports its environment. The script aborts unless every world variable (`XDG_DATA_HOME`, `XDG_STATE_HOME`, `SESSION_TRACKER_PROJECTS_DIR`, `CODEX_SESSIONS_DIR`, `PI_SESSIONS_DIR`, `FACTORY_HOME_OVERRIDE`, `RINGLEADER_CLAUDE_SETTINGS`) lies under the world root and `PATH` starts with the world's `bin/`.
 
 The world holds:
 
@@ -19,7 +19,7 @@ The world holds:
 
 The world is rebuilt on every launch, so a sandbox launch starts without a list cache. The sandbox also sets `CIRCUS_RL` to the ringleader checkout's `.venv/bin/rl` (run `uv sync` there once), `CIRCUS_ENV_LABEL=sandbox` (SANDBOX badge, decision guard) and `CIRCUS_WORLD_ROOT`.
 
-`just smoke-sandbox` runs `golden-check`, then the ignored Rust test `contract_smoke` against real `rl` in the world. Never run `rl` or `python -m ringleader` outside these recipes.
+`just test-smoke` runs `golden-check`, then the ignored Rust test `contract_smoke` against real `rl` in the world. Never run `rl` or `python -m ringleader` outside these recipes.
 
 ## The fake harness
 
@@ -65,13 +65,13 @@ Next lever: if cold `rl` spawns (about 100–300 ms per call) still feel slow, t
 
 1. Change ringleader's `docs/tech/json-contract.md`, implementation and golden documents (`tests/golden/contract-*.json`) there.
 2. Run `just sync-golden` here; update `src/api/types.ts`, the Rust `Envelope` and fixtures if the version or shapes changed.
-3. Run `just check` and `just smoke-sandbox`. `just golden-check` fails when the copies drift.
+3. Run `just check` and `just test-smoke`. `just golden-check` fails when the copies drift.
 
 ## User-run native QA
 
 These need the native window and are run by hand; agents do not run them. Use the SANDBOX app for decisions and quitting; use `Circus.app` only for the last items.
 
-1. `just dev-sandbox` opens a window titled Circus with the SANDBOX badge and the session list.
+1. `just sandbox` opens a window titled Circus with the SANDBOX badge and the session list.
 2. `e`, ⇧E, `#`, `h`, `s`, `r` each hide the row with a toast, and `z` brings it back inside the window.
 3. ⌘K opens the palette; Esc closes it.
 4. `o` shows the dry-run toast with the `rl resume …` command line.

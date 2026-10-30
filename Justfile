@@ -118,8 +118,12 @@ check:
     @cargo test --locked --manifest-path {{manifest}}
     @bash scripts/sandbox-env-test.sh
 
+# Run the app against your live sessions through the installed rl.
+run: ensure-dist
+    @pnpm tauri dev
+
 # Run the app against a freshly built synthetic world (never live data).
-dev-sandbox: ensure-dist
+sandbox: ensure-dist
     #!/usr/bin/env bash
     set -euo pipefail
     source scripts/sandbox-env.sh
@@ -159,7 +163,7 @@ golden-check:
     echo "golden documents are current"
 
 # Run the Rust client against a real `rl` in a freshly built synthetic world.
-smoke-sandbox: golden-check ensure-dist
+test-smoke: golden-check ensure-dist
     #!/usr/bin/env bash
     set -euo pipefail
     source scripts/sandbox-env.sh
