@@ -10,6 +10,7 @@ use crate::process::{OnDeadline, ProcessRunner, ProcessSpec, RunError};
 pub const SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SHELL_PROBE_SCRIPT: &str = r#"printf '\n__CIRCUS_PATH__%s__CIRCUS_END__\n' "$PATH"; printf '__CIRCUS_RL__%s__CIRCUS_END__\n' "$(command -v rl 2>/dev/null)"; exit 0"#;
 pub const FALLBACK_DIRS: [&str; 3] = ["~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"];
+pub const SETTINGS_FILE: &str = "settings.json";
 const DEFAULT_SHELL: &str = "/bin/zsh";
 const UNRESOLVED_SANDBOX_RL: &str = "circus-sandbox-rl-unresolved";
 const END_MARKER: &str = "__CIRCUS_END__";
@@ -30,6 +31,20 @@ struct RawSettings {
 
 fn non_empty(list: Option<Vec<String>>) -> Option<Vec<String>> {
     list.filter(|items| !items.is_empty())
+}
+
+pub fn read_or_default<T: Default>(path: &Path, parse: impl Fn(&str) -> Result<T, String>) -> T {
+    match std::fs::read_to_string(path) {
+        Ok(text) => parse(&text).unwrap_or_else(|error| {
+            eprintln!("circus: ignoring {}: {error}", path.display());
+            T::default()
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => T::default(),
+        Err(error) => {
+            eprintln!("circus: could not read {}: {error}", path.display());
+            T::default()
+        }
+    }
 }
 
 pub fn parse_settings(text: &str) -> Result<Settings, String> {

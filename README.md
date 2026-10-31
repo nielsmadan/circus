@@ -39,6 +39,8 @@ just build-debug    # src-tauri/target/debug/bundle/macos/Circus.app
 - `rl_command` — argv array used instead of searching for `rl`.
 - `terminal_command` — argv array that replaces the iTerm2 launcher for resume; `{command}` inside any element is replaced by the `rl resume …` command line.
 
+View › Appearance switches between Follow System (the default), Light and Dark. The choice is saved to `preferences.json` in the same directory and applied at the next launch; the app writes that file itself.
+
 Environment variables: `CIRCUS_RL` (command line, wins over settings), `CIRCUS_ENV_LABEL` (shows a badge and enables the sandbox decision guard), `CIRCUS_WORLD_ROOT`, `CIRCUS_RESUME_DRY_RUN=1`. The recipes set the sandbox ones for you.
 
 ## Documentation

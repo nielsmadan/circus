@@ -53,6 +53,10 @@ Children start with `setsid`, so each is its own session leader and process grou
 
 The Quit item is custom because the predefined one bypasses the gate. Dock › Quit and logout cannot be intercepted (tauri-apps/tauri#9198): unsent decisions are dropped, and `rl` processes already running finish headless.
 
+## Appearance
+
+`src-tauri/src/appearance.rs`, `lib.rs`, `src/index.css`. The native View › Appearance menu offers Follow System, Light and Dark as three check items that Rust keeps exclusive (a click toggles the clicked item natively, so every pick re-sets all three). A pick calls `AppHandle::set_theme`, which on macOS sets `NSApp.appearance` (`None` for Follow System, which tracks the system live). Window chrome, menus and the webview's `prefers-color-scheme` follow it, and the frontend styles both themes only through Tailwind's default media-query `dark:` variant, with `color-scheme: light dark` on `:root` so native controls and scrollbars follow too. There is no theme state in the frontend and no Tauri command for it. The choice is saved to `preferences.json` (`{"appearance": "system" | "light" | "dark"}`), which the app owns and rewrites whole, next to the hand-edited `settings.json` it never writes. It is applied at launch in `setup`; a missing, unreadable or invalid file means Follow System. With `CIRCUS_ENV_LABEL` set the file is `<CIRCUS_WORLD_ROOT>/.circus/preferences.json`, and saving is off when the label has no world root, so a sandbox never changes the live preference.
+
 ## Shortcuts
 
 `@shortcutkit/core` provides contexts and a registry (`src/shortcuts/contexts.ts`, in-memory store, no rebinding UI). Reading-pane buttons, the palette and the toast Undo button call `registry.dispatch`, so mouse and keys share one path (the toast falls back to `controller.undo()` while another tab hides the Inbox). The DOM host and React bindings in `src/shortcuts/` are temporary.

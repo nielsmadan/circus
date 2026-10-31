@@ -1,3 +1,4 @@
+pub mod appearance;
 pub mod cache;
 pub mod close;
 pub mod commands;
@@ -12,9 +13,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{
+    CheckMenuItem, CheckMenuItemBuilder, Menu, MenuBuilder, MenuItemBuilder, SubmenuBuilder,
+};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 
+use appearance::Appearance;
 use close::{CloseGate, Watch, close_effects};
 use commands::{CLOSE_REQUESTED_EVENT, lock_gate};
 use config::{EnvSnapshot, Pending, Resolved, Settings};
@@ -32,40 +36,39 @@ pub struct AppState {
     pub resume_dry_run: bool,
     pub list_cache: Option<PathBuf>,
     pub close: Arc<Mutex<CloseGate>>,
+    pub preferences: Option<PathBuf>,
+}
+
+struct AppearanceMenu {
+    items: Vec<(Appearance, CheckMenuItem<tauri::Wry>)>,
 }
 
 fn env_non_empty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|value| !value.is_empty())
 }
 
-fn load_settings(path: &std::path::Path) -> Settings {
-    match std::fs::read_to_string(path) {
-        Ok(text) => config::parse_settings(&text).unwrap_or_else(|error| {
-            eprintln!("circus: ignoring {}: {error}", path.display());
-            Settings::default()
-        }),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Settings::default(),
-        Err(error) => {
-            eprintln!("circus: could not read {}: {error}", path.display());
-            Settings::default()
-        }
-    }
-}
-
 fn app_state(app: &AppHandle, close: Arc<Mutex<CloseGate>>) -> AppState {
-    let settings_file = match app.path().app_config_dir() {
-        Ok(dir) => Some(dir.join("settings.json")),
+    let config_dir = match app.path().app_config_dir() {
+        Ok(dir) => Some(dir),
         Err(error) => {
-            eprintln!("circus: no app config directory: {error}");
+            eprintln!(
+                "circus: no app config directory, settings and appearance not saved: {error}"
+            );
             None
         }
     };
+    let settings_file = config_dir
+        .as_ref()
+        .map(|dir| dir.join(config::SETTINGS_FILE));
     let settings = settings_file
         .as_deref()
-        .map(load_settings)
+        .map(|path| config::read_or_default(path, config::parse_settings))
         .unwrap_or_default();
     let environment_label = env_non_empty("CIRCUS_ENV_LABEL");
     let world_root = env_non_empty("CIRCUS_WORLD_ROOT");
+    let preferences = config_dir.as_deref().and_then(|dir| {
+        appearance::preferences_path(dir, environment_label.as_deref(), world_root.as_deref())
+    });
     let list_cache = match app.path().app_data_dir() {
         Ok(dir) => cache::cache_path(&dir, environment_label.as_deref(), world_root.as_deref()),
         Err(error) => {
@@ -107,10 +110,45 @@ fn app_state(app: &AppHandle, close: Arc<Mutex<CloseGate>>) -> AppState {
         resume_dry_run: std::env::var("CIRCUS_RESUME_DRY_RUN").is_ok_and(|value| value == "1"),
         list_cache,
         close,
+        preferences,
     }
 }
 
-fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+fn check_selected(items: &[(Appearance, CheckMenuItem<tauri::Wry>)], selected: Appearance) {
+    for (each, item) in items {
+        if let Err(error) = item.set_checked(*each == selected) {
+            eprintln!("circus: could not update the appearance menu: {error}");
+        }
+    }
+}
+
+fn set_appearance(app: &AppHandle, chosen: Appearance) {
+    app.set_theme(appearance::forced_theme(chosen));
+    check_selected(&app.state::<AppearanceMenu>().items, chosen);
+    if let Some(path) = &app.state::<AppState>().preferences
+        && let Err(error) = appearance::save(path, chosen)
+    {
+        eprintln!("circus: could not save {}: {error}", path.display());
+    }
+}
+
+fn appearance_items(
+    app: &AppHandle,
+) -> tauri::Result<Vec<(Appearance, CheckMenuItem<tauri::Wry>)>> {
+    appearance::ALL
+        .into_iter()
+        .map(|each| {
+            CheckMenuItemBuilder::with_id(appearance::menu_id(each), appearance::menu_label(each))
+                .build(app)
+                .map(|item| (each, item))
+        })
+        .collect()
+}
+
+fn app_menu(
+    app: &AppHandle,
+    appearance_items: &[(Appearance, CheckMenuItem<tauri::Wry>)],
+) -> tauri::Result<Menu<tauri::Wry>> {
     // replaces the predefined Quit, which tao never routes through ExitRequested (tauri-apps/tauri#9198)
     let quit = MenuItemBuilder::with_id(QUIT_MENU_ID, "Quit Circus")
         .accelerator("CmdOrCtrl+Q")
@@ -135,12 +173,21 @@ fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .paste()
         .select_all()
         .build()?;
+    let appearance_menu = appearance_items
+        .iter()
+        .fold(SubmenuBuilder::new(app, "Appearance"), |menu, (_, item)| {
+            menu.item(item)
+        })
+        .build()?;
+    let view = SubmenuBuilder::new(app, "View")
+        .item(&appearance_menu)
+        .build()?;
     let window = SubmenuBuilder::new(app, "Window")
         .minimize()
         .close_window()
         .build()?;
     MenuBuilder::new(app)
-        .items(&[&circus, &edit, &window])
+        .items(&[&circus, &edit, &view, &window])
         .build()
 }
 
@@ -191,8 +238,17 @@ pub fn run() {
     let menu_gate = Arc::clone(&gate);
     let app = tauri::Builder::default()
         .setup(move |app| {
-            app.set_menu(app_menu(app.handle())?)?;
             let state = app_state(app.handle(), setup_gate);
+            let current = state
+                .preferences
+                .as_deref()
+                .map(appearance::load)
+                .unwrap_or_default();
+            app.set_theme(appearance::forced_theme(current));
+            let items = appearance_items(app.handle())?;
+            check_selected(&items, current);
+            app.set_menu(app_menu(app.handle(), &items)?)?;
+            app.manage(AppearanceMenu { items });
             app.manage(state);
             Ok(())
         })
@@ -204,7 +260,10 @@ pub fn run() {
             }
         })
         .on_menu_event(move |app, event| {
-            if event.id().as_ref() == QUIT_MENU_ID && !on_close_request(app, &menu_gate) {
+            let id = event.id().as_ref();
+            if let Some(chosen) = appearance::from_menu_id(id) {
+                set_appearance(app, chosen);
+            } else if id == QUIT_MENU_ID && !on_close_request(app, &menu_gate) {
                 app.exit(0);
             }
         })

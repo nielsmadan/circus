@@ -36,7 +36,7 @@ export const SearchBox = memo(function SearchBox({
         className="w-64 rounded border border-neutral-300 bg-transparent px-2 py-1 pr-7 text-sm outline-none focus:border-blue-500 dark:border-neutral-700"
       />
       {label && query === '' && (
-        <kbd className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 font-mono text-xs opacity-50">
+        <kbd className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 font-mono text-xs opacity-60">
           {label}
         </kbd>
       )}

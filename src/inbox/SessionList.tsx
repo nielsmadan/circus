@@ -48,7 +48,7 @@ const SessionRowItem = memo(function SessionRowItem({
         )}
         <span className="min-w-0 flex-1 truncate font-medium">{row.label}</span>
         {row.running === true && (
-          <span className={`${CHIP} bg-green-500/15 text-green-700 dark:text-green-400`}>
+          <span className={`${CHIP} bg-green-500/15 text-green-800 dark:text-green-400`}>
             running
           </span>
         )}

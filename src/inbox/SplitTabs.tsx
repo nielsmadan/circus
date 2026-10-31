@@ -40,7 +40,7 @@ export const SplitTabs = memo(function SplitTabs({
           </button>
         ))}
       </div>
-      {nextLabel && <kbd className="font-mono text-xs opacity-50">{nextLabel}</kbd>}
+      {nextLabel && <kbd className="font-mono text-xs opacity-60">{nextLabel}</kbd>}
     </div>
   );
 });

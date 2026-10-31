@@ -21,13 +21,10 @@ pub fn cache_path(
 
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let parent = path.parent().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "cache path has no parent")
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")
     })?;
     let name = path.file_name().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "cache path has no file name",
-        )
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
     })?;
     std::fs::create_dir_all(parent)?;
     let temp = parent.join(format!(

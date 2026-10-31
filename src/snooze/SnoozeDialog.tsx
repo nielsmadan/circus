@@ -147,7 +147,7 @@ export function SnoozeDialog(props: SnoozeDialogProps): ReactElement {
           <p
             id="snooze-text-preview"
             aria-live="polite"
-            className={`${EMPTY_PREVIEW_CLASS} ${textParse && !textParse.ok ? 'text-red-600' : 'opacity-80'}`}
+            className={`${EMPTY_PREVIEW_CLASS} ${textParse && !textParse.ok ? 'text-red-600 dark:text-red-400' : 'opacity-80'}`}
           >
             {textParse?.ok ? formatSnoozeTime(textParse.at, now) : (textParse?.error ?? '')}
           </p>
@@ -184,7 +184,7 @@ export function SnoozeDialog(props: SnoozeDialogProps): ReactElement {
           <p
             id="snooze-picker-preview"
             aria-live="polite"
-            className={`${EMPTY_PREVIEW_CLASS} ${pickerParse && !pickerParse.ok ? 'text-red-600' : 'opacity-80'}`}
+            className={`${EMPTY_PREVIEW_CLASS} ${pickerParse && !pickerParse.ok ? 'text-red-600 dark:text-red-400' : 'opacity-80'}`}
           >
             {pickerParse?.ok ? formatSnoozeTime(pickerParse.at, now) : (pickerParse?.error ?? '')}
           </p>

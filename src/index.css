@@ -1,1 +1,6 @@
 @import 'tailwindcss';
+
+:root {
+  color-scheme: light dark;
+  @apply bg-white dark:bg-neutral-950;
+}
