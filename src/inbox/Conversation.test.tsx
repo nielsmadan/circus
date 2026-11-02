@@ -1,10 +1,10 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, act, fireEvent, render, screen, within } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App';
 import type { CircusError, ListResponse, SessionRow, TailItem, TailsResponse } from '../api/types';
 import { inboxListContext } from '../shortcuts/contexts';
-import { ShortcutRegistryProvider } from '../shortcuts/react';
+import { ShortcutKitProvider } from '@shortcutkit/react';
 import { createFakeApi, deferred, type Deferred, type FakeApi } from '../test/fakeApi';
 import { makeList, makeRow } from '../test/fixtures';
 import { shortcutHarness, type ShortcutHarness } from '../test/shortcuts';
@@ -108,9 +108,9 @@ async function renderInbox(list: ListResponse = makeList(ROWS)) {
   });
   render(
     <StrictMode>
-      <ShortcutRegistryProvider registry={harness.registry}>
+      <ShortcutKitProvider registry={harness.registry}>
         <App api={api} />
-      </ShortcutRegistryProvider>
+      </ShortcutKitProvider>
     </StrictMode>,
   );
   await flush();
@@ -144,7 +144,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  harness.dispose();
+  cleanup();
   vi.useRealTimers();
 });
 

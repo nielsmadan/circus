@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import { inboxListContext } from '../shortcuts/contexts';
-import { useShortcutLabel, useShortcutRegistry } from '../shortcuts/react';
+import { useShortcuts, useRegistry } from '@shortcutkit/react';
 import type { ToastTone } from './messages';
 import type { InboxController } from './useInbox';
 
@@ -11,8 +11,8 @@ const TONE_CLASS: Readonly<Record<ToastTone, string>> = {
 };
 
 export function Toasts({ controller }: { readonly controller: InboxController }): ReactElement {
-  const registry = useShortcutRegistry();
-  const undoLabel = useShortcutLabel(inboxListContext, 'undo');
+  const registry = useRegistry();
+  const undoLabel = useShortcuts(inboxListContext, 'undo').labels[0];
   const undo = () => {
     const inboxActive = registry
       .activeBindings()

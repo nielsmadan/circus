@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from 'react';
 import { snoozeDialogContext } from '../shortcuts/contexts';
-import { useShortcutContext } from '../shortcuts/react';
+import { useShortcutContext } from '@shortcutkit/react';
 import { formatSnoozeTime, parseSnooze, SNOOZE_PRESETS, type SnoozeParse } from './parse';
 
 export interface SnoozeDialogProps {

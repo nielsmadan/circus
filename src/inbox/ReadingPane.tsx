@@ -1,7 +1,7 @@
 import { memo, type ReactElement, type ReactNode } from 'react';
 import type { SessionRow } from '../api/types';
 import { inboxListContext, type InboxListAction } from '../shortcuts/contexts';
-import { useShortcutLabel, useShortcutRegistry } from '../shortcuts/react';
+import { useShortcuts, useRegistry } from '@shortcutkit/react';
 
 const DAY_FORMAT = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 const MOMENT_FORMAT = new Intl.DateTimeFormat(undefined, {
@@ -56,8 +56,8 @@ const ActionButton = memo(function ActionButton({
   readonly action: InboxListAction;
   readonly label: string;
 }): ReactElement {
-  const registry = useShortcutRegistry();
-  const shortcut = useShortcutLabel(inboxListContext, action);
+  const registry = useRegistry();
+  const shortcut = useShortcuts(inboxListContext, action).labels[0];
   return (
     <button
       type="button"

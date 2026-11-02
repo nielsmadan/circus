@@ -14,6 +14,8 @@ export interface ProjectCount {
 export interface RowIndex {
   readonly mtimeMs: ReadonlyMap<string, number>;
   readonly haystack: ReadonlyMap<string, string>;
+  readonly oldestFirst: readonly string[];
+  readonly newestFirst: readonly string[];
 }
 
 function buildHaystack(row: SessionRow): string {
@@ -47,7 +49,12 @@ export function indexRows(rows: readonly SessionRow[]): RowIndex {
     mtimeMs.set(row.id, parseMtime(row.mtime));
     haystack.set(row.id, buildHaystack(row));
   }
-  return { mtimeMs, haystack };
+  const keyed = [...mtimeMs].map(([id, ms]) => ({ id, ms }));
+  const order = (direction: number) =>
+    [...keyed]
+      .sort((a, b) => (a.ms - b.ms) * direction || compareStrings(a.id, b.id))
+      .map(({ id }) => id);
+  return { mtimeMs, haystack, oldestFirst: order(1), newestFirst: order(-1) };
 }
 
 export function hiddenIds(entries: readonly OutboxEntry[]): ReadonlySet<string> {
@@ -78,6 +85,14 @@ function sortByMtime(
   index: RowIndex,
   newestFirst: boolean,
 ): SessionRow[] {
+  if (rows.length < 2) return [...rows];
+  const order = newestFirst ? index.newestFirst : index.oldestFirst;
+  if (rows.length * Math.log2(rows.length) >= order.length) {
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    if (byId.size === rows.length && rows.every((row) => index.mtimeMs.has(row.id))) {
+      return order.map((id) => byId.get(id)).filter((row): row is SessionRow => row !== undefined);
+    }
+  }
   const direction = newestFirst ? -1 : 1;
   return rows
     .map((row) => ({ row, ms: mtimeOf(row, index) }))

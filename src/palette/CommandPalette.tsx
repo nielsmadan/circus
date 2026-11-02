@@ -4,16 +4,9 @@ import {
   type KeyBindingEntry,
   type KeyBindings,
 } from '@shortcutkit/core';
-import {
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type KeyboardEvent,
-  type ReactElement,
-} from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactElement } from 'react';
 import { appContext, paletteContext, snoozeDialogContext } from '../shortcuts/contexts';
-import { useShortcutContext, useShortcutRegistry } from '../shortcuts/react';
+import { useShortcutContext, useRegistry, useRegistrySnapshot } from '@shortcutkit/react';
 
 export interface PaletteProps {
   readonly open: boolean;
@@ -56,13 +49,13 @@ function paletteItems(bindings: KeyBindings, query: string): PaletteItem[] {
 const OWNED_KEYS: ReadonlySet<string> = new Set(['ArrowDown', 'ArrowUp', 'Enter', 'Tab']);
 
 export function CommandPalette(props: PaletteProps): ReactElement | null {
-  useShortcutContext(paletteContext, props.onClose, props.open);
+  useShortcutContext(paletteContext, props.onClose, { enabled: props.open });
   return props.open ? <PaletteBody onClose={props.onClose} /> : null;
 }
 
 function PaletteBody({ onClose }: { readonly onClose: () => void }): ReactElement {
-  const registry = useShortcutRegistry();
-  useSyncExternalStore(registry.subscribe, registry.getSnapshot);
+  const registry = useRegistry();
+  useRegistrySnapshot();
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
   const [opener] = useState(() => document.activeElement);

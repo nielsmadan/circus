@@ -54,11 +54,14 @@ doctor:
         done
     fi
     core=../shortcutkit-js/packages/core/src
-    if [ -f "$core/index.ts" ]; then
-        printf '  ok       %s\n' "$core/index.ts"
-    else
-        printf '  MISSING  %-12s expected beside this checkout\n' "$core/index.ts"; fail=1
-    fi
+    for package in core dom react; do
+        entry="../shortcutkit-js/packages/$package/dist/index.js"
+        if [ -f "$entry" ]; then
+            printf '  ok       %s\n' "$entry"
+        else
+            printf '  MISSING  %s; build the linked adapters (see README)\n' "$entry"; fail=1
+        fi
+    done
     if [ -f "$(git rev-parse --git-path hooks/pre-commit)" ]; then
         printf '  ok       git hooks\n'
     else

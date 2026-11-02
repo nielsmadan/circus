@@ -122,6 +122,21 @@ describe('splitRows and splitCounts', () => {
     expect(ids(splitRows(rows, 'all', indexRows([])))).toEqual([a.id, b.id, c.id, d.id]);
   });
 
+  it('orders a visible subset using its current row objects', () => {
+    const updated = { ...c, label: 'Updated label' };
+    const sorted = splitRows([updated, a], 'all', index);
+    expect(sorted).toEqual([a, updated]);
+    expect(sorted[1]).toBe(updated);
+  });
+
+  it('preserves duplicate rows when sorting', () => {
+    expect(splitRows([c, a, c], 'all', index)).toEqual([a, c, c]);
+  });
+
+  it('returns each visible row once when the index source repeats an id', () => {
+    expect(splitRows([c, a], 'all', indexRows([a, c, a]))).toEqual([a, c]);
+  });
+
   it('counts the three splits', () => {
     expect(splitCounts(rows)).toEqual({ recent: 3, woke: 2, all: 4 });
   });

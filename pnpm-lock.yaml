@@ -169,6 +169,12 @@ importers:
       '@shortcutkit/core':
         specifier: link:../shortcutkit-js/packages/core
         version: link:../shortcutkit-js/packages/core
+      '@shortcutkit/dom':
+        specifier: link:../shortcutkit-js/packages/dom
+        version: link:../shortcutkit-js/packages/dom
+      '@shortcutkit/react':
+        specifier: link:../shortcutkit-js/packages/react
+        version: link:../shortcutkit-js/packages/react
       '@tauri-apps/api':
         specifier: 2.12.4
         version: 2.12.4

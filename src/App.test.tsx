@@ -1,6 +1,6 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import type { InboxController } from './inbox/useInbox';
 import { createFakeApi, okOutcome, type FakeApi } from './test/fakeApi';
@@ -31,8 +31,6 @@ beforeEach(async () => {
   harness = await shortcutHarness();
   api = createFakeApi(makeList([rowA, rowB]));
 });
-
-afterEach(() => harness.dispose());
 
 const renderApp = () => render(<App api={api} />, { wrapper: harness.wrapper });
 
@@ -69,6 +67,20 @@ describe('App shell', () => {
       .find((p) => p.id === 'panel-Inbox');
     expect(inbox).toBeInTheDocument();
     expect(inbox).not.toBeVisible();
+  });
+
+  it('activates a focused section tab with Enter', async () => {
+    renderApp();
+    await act(async () => {});
+    fireEvent.keyDown(document.body, { key: '/', code: 'Slash' });
+    expect(screen.getByRole('searchbox', { name: 'Search sessions' })).toHaveFocus();
+    await userEvent.tab({ shift: true });
+    const harvest = screen.getByRole('tab', { name: 'Harvest' });
+    expect(harvest).toHaveFocus();
+    await userEvent.keyboard('{Enter}');
+    expect(harvest).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel', { name: 'Harvest' })).toBeVisible();
+    expect(api.count('resume')).toBe(0);
   });
 
   it('switches tabs with ⌘2 and ⌘3', async () => {

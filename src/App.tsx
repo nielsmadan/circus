@@ -5,8 +5,8 @@ import { InboxView } from './inbox/InboxView';
 import { Toasts } from './inbox/Toasts';
 import { useInbox } from './inbox/useInbox';
 import { CommandPalette } from './palette/CommandPalette';
-import { appContext } from './shortcuts/contexts';
-import { useShortcutContext } from './shortcuts/react';
+import { appContext, snoozeDialogContext } from './shortcuts/contexts';
+import { useRegistry, useShortcutContext } from '@shortcutkit/react';
 
 const TABS = ['Enrich', 'Triage', 'Inbox', 'Harvest'] as const;
 type Tab = (typeof TABS)[number];
@@ -21,11 +21,15 @@ const TAB_FOR_ACTION: Readonly<Partial<Record<AppAction, Tab>>> = {
 
 export function App({ api }: { readonly api: CircusApi }) {
   const controller = useInbox(api);
+  const registry = useRegistry();
   const [active, setActive] = useState<Tab>('Inbox');
   const [paletteOpen, setPaletteOpen] = useState(false);
   useShortcutContext(appContext, (action) => {
     if (action === 'openPalette') {
-      setPaletteOpen(true);
+      const snoozing = registry
+        .getSnapshot()
+        .activations.some(({ contextId }) => contextId === snoozeDialogContext.id);
+      if (!snoozing) setPaletteOpen(true);
       return;
     }
     const tab = TAB_FOR_ACTION[action];

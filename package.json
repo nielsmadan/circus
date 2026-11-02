@@ -8,7 +8,7 @@
   },
   "scripts": {
     "setup": "pnpm install --frozen-lockfile && lefthook install && pnpm run doctor",
-    "doctor": "test -d node_modules && test -f ../shortcutkit-js/packages/core/src/index.ts && lefthook validate && test -x \"$(git rev-parse --git-path hooks/pre-commit)\" && test -x \"$(git rev-parse --git-path hooks/pre-push)\" || { echo 'Setup incomplete; run pnpm run setup' >&2; exit 1; }",
+    "doctor": "test -d node_modules && test -f ../shortcutkit-js/packages/core/dist/index.js && test -f ../shortcutkit-js/packages/dom/dist/index.js && test -f ../shortcutkit-js/packages/react/dist/index.js && lefthook validate && test -x \"$(git rev-parse --git-path hooks/pre-commit)\" && test -x \"$(git rev-parse --git-path hooks/pre-push)\" || { echo 'Setup incomplete; build the linked adapters (see README), then run pnpm run setup' >&2; exit 1; }",
     "dev": "vite",
     "dev:fake": "VITE_FAKE_API=1 vite",
     "build": "vite build",
@@ -23,6 +23,8 @@
   },
   "dependencies": {
     "@shortcutkit/core": "link:../shortcutkit-js/packages/core",
+    "@shortcutkit/dom": "link:../shortcutkit-js/packages/dom",
+    "@shortcutkit/react": "link:../shortcutkit-js/packages/react",
     "@tauri-apps/api": "2.12.4",
     "react": "19.3.1",
     "react-dom": "19.3.1"

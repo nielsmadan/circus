@@ -1,8 +1,9 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App';
 import type { CircusError, ListResponse } from '../api/types';
-import { ShortcutRegistryProvider } from '../shortcuts/react';
+import { ShortcutKitProvider, useShortcuts } from '@shortcutkit/react';
+import { inboxListContext } from '../shortcuts/contexts';
 import {
   createFakeApi,
   NATIVE_INFO,
@@ -13,6 +14,11 @@ import {
 import { makeList, makeRow } from '../test/fixtures';
 import { shortcutHarness, type ShortcutHarness } from '../test/shortcuts';
 import { scrollToShow } from './rowWindow';
+
+vi.mock('@shortcutkit/react', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@shortcutkit/react')>();
+  return { ...original, useShortcuts: vi.fn(original.useShortcuts) };
+});
 
 let harness: ShortcutHarness;
 let api: FakeApi;
@@ -98,9 +104,9 @@ async function renderInbox(
   api = createFakeApi(list);
   setup(api);
   render(
-    <ShortcutRegistryProvider registry={harness.registry}>
+    <ShortcutKitProvider registry={harness.registry}>
       <App api={api} />
-    </ShortcutRegistryProvider>,
+    </ShortcutKitProvider>,
   );
   await flush();
   await flush();
@@ -138,7 +144,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  harness.dispose();
+  cleanup();
   vi.useRealTimers();
 });
 
@@ -185,10 +191,27 @@ describe('InboxView list and reading pane', () => {
   });
 
   it('does not re-render the reading-pane action buttons on j', async () => {
+    const shortcuts = vi.mocked(useShortcuts);
+    shortcuts.mockClear();
     await renderInbox();
-    const shortcuts = vi.spyOn(harness.registry, 'shortcuts');
+    const actions = [
+      'harvestArchive',
+      'archive',
+      'delete',
+      'snooze',
+      'keep',
+      'keepGoing',
+      'resume',
+    ];
+    const buttonRenders = () =>
+      shortcuts.mock.calls
+        .filter(([context, action]) => context === inboxListContext && actions.includes(action))
+        .map(([, action]) => action);
+    const initial = buttonRenders();
+    expect(new Set(initial)).toEqual(new Set(actions));
     press('KeyJ');
-    expect(shortcuts).not.toHaveBeenCalled();
+    expect(selectedId()).toBe(login.id);
+    expect(buttonRenders()).toEqual(initial);
   });
 
   it('scrolls the windowed list to keep the selection in view', async () => {
@@ -334,6 +357,21 @@ describe('InboxView decisions', () => {
       ['keep_going', parser.id],
       ['keep', login.id],
     ]);
+  });
+
+  it('keeps the palette closed while a snooze dialog owns focus', async () => {
+    await renderInbox();
+    press('KeyH');
+    const input = screen.getByRole('textbox', { name: 'Snooze until' });
+    type(input, '3d');
+    press('KeyK', { metaKey: true });
+    expect(
+      screen.getAllByRole('dialog').map((dialog) => dialog.getAttribute('aria-labelledby')),
+    ).toEqual(['snooze-title']);
+    expect(input).toHaveFocus();
+    press('Escape');
+    press('KeyK', { metaKey: true });
+    expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeInTheDocument();
   });
 
   it('snoozes through the dialog and keeps list keys away from its input', async () => {

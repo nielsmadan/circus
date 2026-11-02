@@ -1,6 +1,6 @@
 import { memo, type ReactElement } from 'react';
 import { inboxListContext } from '../shortcuts/contexts';
-import { useShortcutLabel } from '../shortcuts/react';
+import { useShortcuts } from '@shortcutkit/react';
 import { SPLITS, type Split } from './derive';
 
 const SPLIT_LABELS: Readonly<Record<Split, string>> = {
@@ -20,7 +20,7 @@ export const SplitTabs = memo(function SplitTabs({
   counts,
   onSplit,
 }: SplitTabsProps): ReactElement {
-  const nextLabel = useShortcutLabel(inboxListContext, 'nextSplit');
+  const nextLabel = useShortcuts(inboxListContext, 'nextSplit').labels[0];
   return (
     <div className="flex items-center gap-1">
       <div role="tablist" aria-label="Splits" className="flex gap-1">

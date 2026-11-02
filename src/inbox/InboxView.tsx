@@ -10,7 +10,7 @@ import {
 import type { CircusApi } from '../api/client';
 import { toCircusError, type DecisionAction, type SessionRow } from '../api/types';
 import { inboxListContext, type InboxListAction } from '../shortcuts/contexts';
-import { useShortcutContext } from '../shortcuts/react';
+import { useShortcutContext } from '@shortcutkit/react';
 import { SnoozeDialog } from '../snooze/SnoozeDialog';
 import { Banners } from './Banners';
 import { Conversation } from './Conversation';
@@ -300,11 +300,9 @@ export function InboxView({ controller, api, visible }: InboxViewProps): ReactEl
     if (decision !== undefined) controller.decide(decision, row);
   };
 
-  useShortcutContext(
-    inboxListContext,
-    onAction,
-    visible && snoozeTarget === null && !controller.closing,
-  );
+  useShortcutContext(inboxListContext, onAction, {
+    enabled: visible && snoozeTarget === null && !controller.closing,
+  });
 
   const loadError = controller.loadError;
   const fatal =

@@ -2,9 +2,11 @@
 
 ## Setup
 
-`just setup` installs dependencies (`pnpm install --frozen-lockfile`), the lefthook git hooks, and runs `just doctor`. The doctor checks Node 24, pnpm, cargo, rustup components, lefthook, just, the sibling `../shortcutkit-js/packages/core/src/index.ts`, git hooks, the ringleader checkout (warning only) and the golden documents (warning only), and prints a content hash of the linked `@shortcutkit/core` source because that checkout has no pinned version.
+`just setup` installs dependencies (`pnpm install --frozen-lockfile`), the lefthook git hooks, and runs `just doctor`. The doctor checks Node 24, pnpm, cargo, rustup components, lefthook, just, the built core, DOM and React package entries in the sibling `../shortcutkit-js`, git hooks, the ringleader checkout (warning only) and the golden documents (warning only), and prints a content hash of the linked `@shortcutkit/core` source because that checkout has no pinned version.
 
 `just check` is the gate: prettier, eslint, tsc, vitest, vite build, `cargo fmt --check`, clippy `-D warnings`, cargo test, and the `sandbox-env.sh` test. CI runs the same recipe.
+
+Build the linked adapters before starting Circus: run `pnpm install --frozen-lockfile` and `pnpm --filter '@shortcutkit/react...' build` in `../shortcutkit-js`. This builds core, DOM and React in dependency order. Vite deduplicates React and the shared shortcut packages so sibling links use the same runtime instances. Both doctor commands verify the three built package entries. CI pins the sibling revision in `.github/workflows/ci.yml`; use that revision for a reproducible local build, and update the pin when adopting library changes.
 
 ## The sandbox world
 

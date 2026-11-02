@@ -1,19 +1,21 @@
 import type { ShortcutRegistry } from '@shortcutkit/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { appContext, createShortcutRegistry, inboxListContext } from './contexts';
-import { installKeyboardHost, isEditingTarget, toShortcutInput } from './keyboard-host';
+import { attachInput } from '@shortcutkit/dom';
 
 let registry: ShortcutRegistry;
 let fired: string[];
 let disposers: (() => void)[];
+let detachInput: () => void;
 
 beforeEach(async () => {
   registry = await createShortcutRegistry();
   fired = [];
+  detachInput = attachInput(registry);
   disposers = [
     registry.activate(appContext, (action) => fired.push(`app/${action}`)),
     registry.activate(inboxListContext, (action) => fired.push(action)),
-    installKeyboardHost(registry, window),
+    detachInput,
   ];
 });
 
@@ -24,7 +26,7 @@ afterEach(() => {
 
 function press(init: KeyboardEventInit): KeyboardEvent {
   const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
-  document.body.dispatchEvent(event);
+  (document.activeElement ?? document.body).dispatchEvent(event);
   return event;
 }
 
@@ -36,7 +38,7 @@ function focusTextInput(): HTMLInputElement {
   return input;
 }
 
-describe('installKeyboardHost', () => {
+describe('Circus DOM shortcuts', () => {
   it('fires a bare-key action and prevents the default', () => {
     const event = press({ code: 'KeyE' });
     expect(fired).toEqual(['harvestArchive']);
@@ -79,58 +81,8 @@ describe('installKeyboardHost', () => {
   });
 
   it('stops listening once removed', () => {
-    disposers.pop()?.();
+    detachInput();
     const event = press({ code: 'KeyE' });
     expect(event.defaultPrevented).toBe(false);
-  });
-});
-
-describe('isEditingTarget', () => {
-  const make = (html: string): Element => {
-    document.body.innerHTML = html;
-    const element = document.body.firstElementChild;
-    if (!element) throw new Error('no element');
-    return element;
-  };
-
-  it.each([
-    '<textarea></textarea>',
-    '<select></select>',
-    '<div contenteditable="true"></div>',
-    '<input>',
-    '<input type="search">',
-    '<input type="datetime-local">',
-    '<input type="week">',
-  ])('is true for %s', (html) => {
-    expect(isEditingTarget(make(html))).toBe(true);
-  });
-
-  it.each(['<button></button>', '<input type="checkbox">', '<div contenteditable="false"></div>'])(
-    'is false for %s',
-    (html) => {
-      expect(isEditingTarget(make(html))).toBe(false);
-    },
-  );
-
-  it('is false for no element', () => {
-    expect(isEditingTarget(null)).toBe(false);
-  });
-});
-
-describe('toShortcutInput', () => {
-  it('maps code, modifiers, repeat and editing state', () => {
-    const event = new KeyboardEvent('keydown', {
-      code: 'KeyA',
-      altKey: true,
-      metaKey: true,
-      repeat: true,
-    });
-    expect(toShortcutInput(event, true)).toEqual({
-      type: 'key',
-      code: 'KeyA',
-      modifiers: { ctrl: false, alt: true, shift: false, meta: true },
-      repeat: true,
-      editingText: true,
-    });
   });
 });

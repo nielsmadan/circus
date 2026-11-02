@@ -5,8 +5,7 @@ import { createCircusApi, type CircusApi } from './api/client';
 import type { ListResponse } from './api/types';
 import type { MemoryApi } from './dev/memoryApi';
 import { createShortcutRegistry } from './shortcuts/contexts';
-import { installKeyboardHost } from './shortcuts/keyboard-host';
-import { ShortcutRegistryProvider } from './shortcuts/react';
+import { ShortcutKitProvider } from '@shortcutkit/react';
 import './index.css';
 
 declare global {
@@ -39,12 +38,11 @@ const root = document.getElementById('root');
 if (!root) throw new Error('missing #root');
 
 const [registry, api] = await Promise.all([createShortcutRegistry(), createApi()]);
-installKeyboardHost(registry, window);
 
 createRoot(root).render(
   <StrictMode>
-    <ShortcutRegistryProvider registry={registry}>
+    <ShortcutKitProvider registry={registry}>
       <App api={api} />
-    </ShortcutRegistryProvider>
+    </ShortcutKitProvider>
   </StrictMode>,
 );

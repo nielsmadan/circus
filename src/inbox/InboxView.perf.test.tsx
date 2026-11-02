@@ -1,8 +1,8 @@
 import { act, render, screen, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { App } from '../App';
 import { syntheticRows } from '../dev/synthetic';
-import { ShortcutRegistryProvider } from '../shortcuts/react';
+import { ShortcutKitProvider } from '@shortcutkit/react';
 import { createFakeApi } from '../test/fakeApi';
 import { makeList } from '../test/fixtures';
 import { shortcutHarness, type ShortcutHarness } from '../test/shortcuts';
@@ -13,8 +13,6 @@ let harness: ShortcutHarness;
 beforeEach(async () => {
   harness = await shortcutHarness();
 });
-
-afterEach(() => harness.dispose());
 
 const settle = async () => {
   for (let i = 0; i < 5; i += 1) await act(async () => {});
@@ -39,9 +37,9 @@ describe('InboxView re-render budget', () => {
     const renders: string[] = [];
     render(
       <RowRenderProbe.Provider value={(id) => renders.push(id)}>
-        <ShortcutRegistryProvider registry={harness.registry}>
+        <ShortcutKitProvider registry={harness.registry}>
           <App api={api} />
-        </ShortcutRegistryProvider>
+        </ShortcutKitProvider>
       </RowRenderProbe.Provider>,
     );
     await settle();

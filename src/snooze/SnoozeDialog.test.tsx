@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { shortcutHarness, type ShortcutHarness } from '../test/shortcuts';
 import { SnoozeDialog } from './SnoozeDialog';
 
@@ -9,10 +9,6 @@ let harness: ShortcutHarness;
 
 beforeEach(async () => {
   harness = await shortcutHarness();
-});
-
-afterEach(() => {
-  harness.dispose();
 });
 
 const AFTERNOON = new Date(2026, 9, 16, 14, 30);

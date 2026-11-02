@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { appContext, inboxListContext, type InboxListAction } from '../shortcuts/contexts';
-import { useShortcutContext } from '../shortcuts/react';
+import { useShortcutContext } from '@shortcutkit/react';
 import { shortcutHarness, type ShortcutHarness } from '../test/shortcuts';
 import { CommandPalette } from './CommandPalette';
 
@@ -19,7 +19,6 @@ beforeEach(async () => {
 
 afterEach(() => {
   deactivateInbox();
-  harness.dispose();
 });
 
 function Host() {

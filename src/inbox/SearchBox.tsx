@@ -1,6 +1,6 @@
 import { memo, type KeyboardEvent, type ReactElement, type RefObject } from 'react';
 import { inboxListContext } from '../shortcuts/contexts';
-import { useShortcutLabel } from '../shortcuts/react';
+import { useShortcuts } from '@shortcutkit/react';
 
 export interface SearchBoxProps {
   readonly query: string;
@@ -15,7 +15,7 @@ export const SearchBox = memo(function SearchBox({
   onDone,
   inputRef,
 }: SearchBoxProps): ReactElement {
-  const label = useShortcutLabel(inboxListContext, 'search');
+  const label = useShortcuts(inboxListContext, 'search').labels[0];
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (event.key !== 'Enter') return;

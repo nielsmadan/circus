@@ -1,10 +1,10 @@
 import { parseShortcut } from '@shortcutkit/core';
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { shortcutHarness, type ShortcutHarness } from '../test/shortcuts';
 import { inboxListContext, type InboxListAction } from './contexts';
-import { useShortcutContext, useShortcutLabel, useShortcutRegistry } from './react';
+import { useShortcutContext, useShortcuts, useRegistry } from '@shortcutkit/react';
 
 let harness: ShortcutHarness;
 
@@ -12,15 +12,13 @@ beforeEach(async () => {
   harness = await shortcutHarness();
 });
 
-afterEach(() => harness.dispose());
-
 function Listener(props: { handler: (action: InboxListAction) => void; enabled?: boolean }) {
-  useShortcutContext(inboxListContext, props.handler, props.enabled);
+  useShortcutContext(inboxListContext, props.handler, { enabled: props.enabled });
   return null;
 }
 
 function Label(props: { action: InboxListAction }) {
-  return <span>{useShortcutLabel(inboxListContext, props.action)}</span>;
+  return <span>{useShortcuts(inboxListContext, props.action).labels[0]}</span>;
 }
 
 describe('useShortcutContext', () => {
@@ -61,7 +59,7 @@ describe('useShortcutContext', () => {
   });
 });
 
-describe('useShortcutLabel', () => {
+describe('useShortcuts', () => {
   it('renders the mac label of the first shortcut', () => {
     render(
       <>
@@ -88,13 +86,13 @@ describe('useShortcutLabel', () => {
   });
 });
 
-describe('useShortcutRegistry', () => {
+describe('useRegistry', () => {
   it('throws outside the provider', () => {
     function Bare() {
-      useShortcutRegistry();
+      useRegistry();
       return null;
     }
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    expect(() => render(<Bare />)).toThrow('ShortcutRegistryProvider');
+    expect(() => render(<Bare />)).toThrow('ShortcutKitProvider');
   });
 });

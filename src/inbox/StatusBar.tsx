@@ -1,6 +1,6 @@
 import { memo, type ReactElement } from 'react';
 import { inboxListContext } from '../shortcuts/contexts';
-import { useShortcutLabel } from '../shortcuts/react';
+import { useShortcuts } from '@shortcutkit/react';
 import type { OutboxEntry } from './outbox';
 
 export interface StatusBarProps {
@@ -30,7 +30,7 @@ export const StatusBar = memo(function StatusBar({
   entries,
   scanning,
 }: StatusBarProps): ReactElement {
-  const undoKey = useShortcutLabel(inboxListContext, 'undo')?.toLowerCase() ?? 'z';
+  const undoKey = useShortcuts(inboxListContext, 'undo').labels[0]?.toLowerCase() ?? 'z';
   const parts = statusParts(entries, scanning, undoKey);
   return (
     <footer
