@@ -9,21 +9,20 @@ Tauri 2, React 19, TypeScript, Rust. Unsigned, no updater; macOS only.
 - macOS 12 or later
 - Node 24 and pnpm 12.9.0 (`packageManager` in `package.json`)
 - Rust stable with `clippy` and `rustfmt`, `just`, `lefthook`
-- a checkout of `shortcutkit-js` beside this one (`../shortcutkit-js`); `@shortcutkit/core`, `@shortcutkit/dom` and `@shortcutkit/react` are linked from it; use the revision pinned in `.github/workflows/ci.yml` for reproducible builds
 - for the sandbox recipes: the ringleader checkout at `../../ringleader/dev2` (override with `CIRCUS_RINGLEADER`) with `uv sync` run in it
 - for real use: an `rl` installed from a ringleader checkout that has the `--json` commands (`just install` in that checkout)
 
 ## Quick start
 
 ```sh
-pnpm --dir ../shortcutkit-js install --frozen-lockfile
-pnpm --dir ../shortcutkit-js --filter '@shortcutkit/react...' build
 just setup          # dependencies, git hooks, doctor
 just run            # native window against your live sessions, through the installed rl
 just sandbox        # native window against a synthetic world; never touches live data
 pnpm dev:fake       # plain browser, in-memory fake API, no rl
 just build-debug    # src-tauri/target/debug/bundle/macos/Circus.app
 ```
+
+`pnpm install` fetches the three ShortcutKit packages from the Git commit pinned in `package.json`; Vite compiles their TypeScript sources with Circus. No sibling ShortcutKit checkout or npm release is needed.
 
 `just check` runs everything CI runs. `just doctor` reports missing tools. `just run` needs an `rl` with the `--json` commands on your login shell's PATH (`just install` in the ringleader checkout).
 

@@ -53,13 +53,12 @@ doctor:
             fi
         done
     fi
-    core=../shortcutkit-js/packages/core/src
     for package in core dom react; do
-        entry="../shortcutkit-js/packages/$package/dist/index.js"
+        entry="node_modules/@shortcutkit/$package/src/index.ts"
         if [ -f "$entry" ]; then
             printf '  ok       %s\n' "$entry"
         else
-            printf '  MISSING  %s; build the linked adapters (see README)\n' "$entry"; fail=1
+            printf '  MISSING  %s; run: just setup\n' "$entry"; fail=1
         fi
     done
     if [ -f "$(git rev-parse --git-path hooks/pre-commit)" ]; then
@@ -77,10 +76,6 @@ doctor:
         printf '  ok       golden documents\n'
     else
         printf '  warn     %-12s stale or missing; run: just sync-golden\n' 'golden documents'
-    fi
-    if [ -d "$core" ]; then
-        hash="$(find "$core" -name '*.ts' | LC_ALL=C sort | xargs shasum | shasum | cut -c1-12)"
-        printf 'core src hash: %s\n' "$hash"
     fi
     [ "$fail" -eq 0 ] && printf 'Everything in place.\n'
     exit $fail

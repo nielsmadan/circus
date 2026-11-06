@@ -167,14 +167,14 @@ importers:
   .:
     dependencies:
       '@shortcutkit/core':
-        specifier: link:../shortcutkit-js/packages/core
-        version: link:../shortcutkit-js/packages/core
+        specifier: github:nielsmadan/shortcutkit-js#fe2a2dcdce22bcae9556ab573faf22896ec17aa0&path:/packages/core
+        version: https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/core
       '@shortcutkit/dom':
-        specifier: link:../shortcutkit-js/packages/dom
-        version: link:../shortcutkit-js/packages/dom
+        specifier: github:nielsmadan/shortcutkit-js#fe2a2dcdce22bcae9556ab573faf22896ec17aa0&path:/packages/dom
+        version: https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/dom(@shortcutkit/core@https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/core)
       '@shortcutkit/react':
-        specifier: link:../shortcutkit-js/packages/react
-        version: link:../shortcutkit-js/packages/react
+        specifier: github:nielsmadan/shortcutkit-js#fe2a2dcdce22bcae9556ab573faf22896ec17aa0&path:/packages/react
+        version: https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/react(@shortcutkit/core@https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/core)(@shortcutkit/dom@https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/dom(@shortcutkit/core@https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/core))(react@19.3.1)
       '@tauri-apps/api':
         specifier: 2.12.4
         version: 2.12.4
@@ -579,6 +579,24 @@ packages:
 
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
+
+  '@shortcutkit/core@https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/core':
+    resolution: {gitHosted: true, integrity: sha512-UL0vk/Ejw9KT01pmGfIzdacjH/SJZFpbg2lXvpECOv4XEuECIuWeq36yh3IxsxUouvvVZ6OGYXVTCt6nxn2ibA==, path: /packages/core, tarball: https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0}
+    version: 0.0.0
+
+  '@shortcutkit/dom@https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/dom':
+    resolution: {gitHosted: true, integrity: sha512-UL0vk/Ejw9KT01pmGfIzdacjH/SJZFpbg2lXvpECOv4XEuECIuWeq36yh3IxsxUouvvVZ6OGYXVTCt6nxn2ibA==, path: /packages/dom, tarball: https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0}
+    version: 0.0.0
+    peerDependencies:
+      '@shortcutkit/core': workspace:^
+
+  '@shortcutkit/react@https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/react':
+    resolution: {gitHosted: true, integrity: sha512-UL0vk/Ejw9KT01pmGfIzdacjH/SJZFpbg2lXvpECOv4XEuECIuWeq36yh3IxsxUouvvVZ6OGYXVTCt6nxn2ibA==, path: /packages/react, tarball: https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0}
+    version: 0.0.0
+    peerDependencies:
+      '@shortcutkit/core': workspace:^
+      '@shortcutkit/dom': workspace:^
+      react: ^18.0.0 || ^19.0.0
 
   '@tailwindcss/node@4.3.3':
     resolution: {integrity: sha512-/T8IKEsf9VTU6tLjgC7+sv2mOPtQxzE2jMw7u4Tt40Tx+QSZxpzh95/H6cMKoja9XuW7iMdLJYBB0o9G1CaAgg==}
@@ -2112,6 +2130,18 @@ snapshots:
     optional: true
 
   '@rolldown/pluginutils@1.0.1': {}
+
+  '@shortcutkit/core@https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/core': {}
+
+  '@shortcutkit/dom@https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/dom(@shortcutkit/core@https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/core)':
+    dependencies:
+      '@shortcutkit/core': https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/core
+
+  '@shortcutkit/react@https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/react(@shortcutkit/core@https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/core)(@shortcutkit/dom@https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/dom(@shortcutkit/core@https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/core))(react@19.3.1)':
+    dependencies:
+      '@shortcutkit/core': https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/core
+      '@shortcutkit/dom': https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/dom(@shortcutkit/core@https://codeload.github.com/nielsmadan/shortcutkit-js/tar.gz/fe2a2dcdce22bcae9556ab573faf22896ec17aa0#path:/packages/core)
+      react: 19.3.1
 
   '@tailwindcss/node@4.3.3':
     dependencies:

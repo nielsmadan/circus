@@ -9,12 +9,19 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   clearScreen: false,
-  resolve: { dedupe: ['react', 'react-dom', '@shortcutkit/core', '@shortcutkit/dom'] },
+  resolve: {
+    alias: Object.fromEntries(
+      ['core', 'dom', 'react'].map((name) => [
+        `@shortcutkit/${name}`,
+        path.resolve(root, `node_modules/@shortcutkit/${name}/src/index.ts`),
+      ]),
+    ),
+    dedupe: ['react', 'react-dom', '@shortcutkit/core', '@shortcutkit/dom'],
+  },
   server: {
     host: '127.0.0.1',
     port: 1420,
     strictPort: true,
-    fs: { allow: [root, path.resolve(root, '../shortcutkit-js/packages')] },
   },
   test: {
     environment: 'jsdom',

@@ -15,7 +15,12 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "types": [],
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "paths": {
+      "@shortcutkit/core": ["./node_modules/@shortcutkit/core/src/index.ts"],
+      "@shortcutkit/dom": ["./node_modules/@shortcutkit/dom/src/index.ts"],
+      "@shortcutkit/react": ["./node_modules/@shortcutkit/react/src/index.ts"]
+    }
   },
-  "include": ["src"]
+  "include": ["src", "node_modules/@shortcutkit/core/src/globals.d.ts"]
 }
