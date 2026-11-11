@@ -1,7 +1,7 @@
 import { TAIL_CHARS, TAIL_MAX_IDS, type SessionRow, type TailItem } from '../api/types';
 
 export const TAIL_CACHE_CAPACITY = 64;
-export const UNPASSABLE_TAIL = 'circus cannot pass this session id to rl';
+export const UNPASSABLE_TAIL = 'Circus can’t open this session: its id is unusual';
 export const PREFETCH_OFFSETS: readonly number[] = Object.freeze([0, 1, -1, 2, 3, -2, 4, 5]);
 
 export function tailKey(id: string, mtime: string | null, fingerprint: string | null): string {

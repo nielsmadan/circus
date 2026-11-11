@@ -183,7 +183,7 @@ describe('useInbox loading', () => {
     const api = createFakeApi(makeList([rowA]));
     api.fail('scan', circusError('timeout', 'scan took too long'));
     const { result } = await mountInbox(api);
-    expect(texts(result)).toContain('Rescan failed: scan took too long');
+    expect(texts(result)).toContain('Rescan failed');
     expect(result.current.loadError).toBeNull();
     expect(ids(result.current.rows)).toEqual([rowA.id]);
   });
@@ -432,6 +432,7 @@ describe('useInbox decisions', () => {
       Promise.resolve(
         outcome(request, {
           status: 'refused',
+          code: 'changed',
           reason: 'changed since you looked',
           message: 'changed since you looked',
           wrote: false,
@@ -443,7 +444,9 @@ describe('useInbox decisions', () => {
     });
     await advance(4_000);
     expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id]);
-    expect(texts(result)).toContain('changed since you looked — rescanning to pick up the change');
+    expect(texts(result)).toContain(
+      '“fix flaky login” changed since you looked — rescanning to pick up the change',
+    );
     expect(api.count('scan')).toBe(2);
     expect(methods(api).slice(-3)).toEqual(['decide', 'list', 'scan']);
   });
@@ -455,6 +458,7 @@ describe('useInbox decisions', () => {
       Promise.resolve(
         outcome(request, {
           status: 'refused',
+          code: 'running',
           reason: 'fix flaky login is running',
           message: 'fix flaky login is running',
           wrote: false,
@@ -466,7 +470,9 @@ describe('useInbox decisions', () => {
     });
     await advance(4_000);
     expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id]);
-    expect(texts(result)).toContain('fix flaky login is running');
+    expect(texts(result)).toContain(
+      '“fix flaky login” is still running — try again once it has stopped',
+    );
     expect(api.count('scan')).toBe(1);
     expect(methods(api).slice(-2)).toEqual(['decide', 'list']);
   });
@@ -498,7 +504,7 @@ describe('useInbox decisions', () => {
     expect(ids(result.current.rows)).toEqual([rowA.id, rowB.id]);
     expect(result.current.toasts.at(-1)).toMatchObject({
       tone: 'error',
-      text: 'Archive “fix flaky login” failed: bad mtime',
+      text: 'Archive “fix flaky login” failed',
     });
     expect(methods(api).at(-1)).toBe('decide');
     await advance(60_000);
@@ -523,8 +529,8 @@ describe('useInbox decisions', () => {
   });
 
   it.each([
-    ['a running row', makeRow({ ...rowA, running: true }), 'is running'],
-    ['a row with unknown presence', makeRow({ ...rowA, running: null }), "Can't tell whether"],
+    ['a running row', makeRow({ ...rowA, running: true }), 'is still running'],
+    ['a row with unknown presence', makeRow({ ...rowA, running: null }), 'Can’t tell whether'],
   ])('refuses to archive %s client-side', async (_name, row, text) => {
     const api = createFakeApi(makeList([row]));
     const { result } = await mountInbox(api);
@@ -580,16 +586,16 @@ describe('useInbox decisions', () => {
       result.current.decide('delete', rowB);
     });
     act(() => {
-      expect(result.current.undo()?.row.id).toBe(rowB.id);
+      expect(result.current.undo().map((decision) => decision.row.id)).toEqual([rowB.id]);
     });
     expect(texts(result)).toContain('Undid delete “fix parser”');
     expect(ids(result.current.rows)).toEqual([rowB.id]);
     act(() => {
-      expect(result.current.undo()).toBeNull();
+      expect(result.current.undo()).toEqual([]);
     });
     expect(result.current.toasts.at(-1)).toMatchObject({
-      text: 'Nothing to undo — already sent',
-      detail: 'rl session unarchive a brings an archive back',
+      text: 'Nothing to undo — archive “fix flaky login” was already sent',
+      detail: null,
     });
   });
 
@@ -656,6 +662,165 @@ describe('useInbox decisions', () => {
   });
 });
 
+describe('useInbox bulk decisions', () => {
+  const refusal = (request: DecideRequest) =>
+    outcome(request, { status: 'refused', code: 'running', reason: 'running', wrote: false });
+
+  it('sums up only the members that went through and reports each failure', async () => {
+    const api = createFakeApi(makeList([rowA, rowB, rowC]));
+    const { result } = await mountInbox(api);
+    api.setDefault('decide', (request) =>
+      Promise.resolve(request.id === rowB.id ? refusal(request) : okOutcome(request)),
+    );
+    act(() => {
+      expect(result.current.decideMany('keep', [rowA, rowB, rowC])).toBe(true);
+    });
+    expect(texts(result)).toContain('Keep 3 sessions');
+    await advance(4_000);
+    await flush();
+    expect(texts(result)).toEqual([
+      '“fix parser” is still running — try again once it has stopped',
+      'Kept 2 sessions',
+    ]);
+  });
+
+  it('sums up nothing when every member failed', async () => {
+    const api = createFakeApi(makeList([rowA, rowB]));
+    const { result } = await mountInbox(api);
+    api.setDefault('decide', (request) => Promise.resolve(refusal(request)));
+    act(() => {
+      result.current.decideMany('keep', [rowA, rowB]);
+    });
+    await advance(4_000);
+    await flush();
+    expect(texts(result)).toEqual([
+      '“fix flaky login” is still running — try again once it has stopped',
+      '“fix parser” is still running — try again once it has stopped',
+    ]);
+  });
+
+  it('counts the settled and in-flight members as sent when undoing the rest', async () => {
+    const api = createFakeApi(makeList([rowA, rowB, rowC]));
+    const { result } = await mountInbox(api);
+    const first = api.defer('decide');
+    const second = api.defer('decide');
+    act(() => {
+      result.current.decideMany('keep', [rowA, rowB, rowC]);
+    });
+    await advance(4_000);
+    first.resolve(okOutcome(api.decideRequest(0)));
+    await flush();
+    expect(api.count('decide')).toBe(2);
+    act(() => {
+      expect(result.current.undo().map((decision) => decision.row.id)).toEqual([rowC.id]);
+    });
+    expect(texts(result)).toContain('Undid keep of 1 session (2 already sent)');
+    second.resolve(okOutcome(api.decideRequest(1)));
+    await flush();
+    expect(texts(result)).toContain('Kept 2 sessions');
+  });
+
+  it('refuses everything while decisions are blocked', async () => {
+    const api = createFakeApi(makeList([rowA, rowB], { registry: '/x/registry.json' }));
+    api.setDefault('appInfo', () =>
+      Promise.resolve({ ...NATIVE_INFO, environment_label: 'sandbox', world_root: '/w' }),
+    );
+    const { result } = await mountInbox(api);
+    act(() => {
+      expect(result.current.decideMany('keep', [rowA, rowB])).toBe(false);
+    });
+    expect(texts(result)).toEqual([
+      'Sandbox registry /x/registry.json is outside /w — decisions are disabled',
+    ]);
+    expect(result.current.entries).toEqual([]);
+  });
+
+  it('refuses to harvest several sessions at once', async () => {
+    const api = createFakeApi(makeList([rowA, rowB]));
+    const { result } = await mountInbox(api);
+    act(() => {
+      expect(result.current.decideMany('harvest', [rowA, rowB])).toBe(false);
+    });
+    expect(texts(result)).toEqual(['Harvest one session at a time — unmark all but one']);
+    expect(result.current.entries).toEqual([]);
+  });
+
+  it('skips refused rows and decides the one left like a single decision', async () => {
+    const busy = makeRow({ ...rowB, running: true });
+    const api = createFakeApi(makeList([rowA, busy]));
+    const { result } = await mountInbox(api);
+    act(() => {
+      expect(result.current.decideMany('archive', [rowA, busy])).toBe(true);
+    });
+    expect(texts(result)).toEqual([
+      'fix parser is still running — try again once it has stopped',
+      'Archive “fix flaky login”',
+    ]);
+    expect(result.current.entries.map((entry) => entry.decision.row.id)).toEqual([rowA.id]);
+  });
+
+  it('lists every skipped row in the detail', async () => {
+    const busyA = makeRow({ ...rowA, running: true });
+    const busyB = makeRow({ ...rowB, running: true });
+    const api = createFakeApi(makeList([busyA, busyB]));
+    const { result } = await mountInbox(api);
+    act(() => {
+      expect(result.current.decideMany('archive', [busyA, busyB])).toBe(false);
+    });
+    expect(result.current.toasts).toEqual([
+      expect.objectContaining({
+        text: 'Skipped 2 sessions',
+        detail:
+          'fix flaky login is still running — try again once it has stopped\nfix parser is still running — try again once it has stopped',
+      }),
+    ]);
+  });
+
+  it('says how many rows already had a pending change', async () => {
+    const api = createFakeApi(makeList([rowA, rowB, rowC]));
+    const { result } = await mountInbox(api);
+    act(() => {
+      result.current.decide('keep', rowA);
+    });
+    act(() => {
+      expect(result.current.decideMany('archive', [rowA, rowB, rowC])).toBe(true);
+    });
+    expect(texts(result)).toContain('1 session already has a pending change');
+    expect(texts(result)).toContain('Archive 2 sessions');
+  });
+
+  it('enqueues nothing when every row already has a pending change', async () => {
+    const api = createFakeApi(makeList([rowA, rowB]));
+    const { result } = await mountInbox(api);
+    act(() => {
+      result.current.decideMany('keep', [rowA, rowB]);
+    });
+    act(() => {
+      expect(result.current.decideMany('archive', [rowA, rowB])).toBe(false);
+    });
+    expect(texts(result)).toContain('2 sessions already have a pending change');
+    expect(result.current.entries.map((entry) => entry.decision.action)).toEqual(['keep', 'keep']);
+  });
+
+  it('sums up the in-flight member when closing discards the rest of its batch', async () => {
+    const api = createFakeApi(makeList([rowA, rowB, rowC]));
+    const { result } = await mountInbox(api);
+    const sent = api.defer('decide');
+    act(() => {
+      result.current.decideMany('keep', [rowA, rowB, rowC]);
+    });
+    await advance(4_000);
+    act(() => api.emitCloseRequested());
+    await flush();
+    act(() => result.current.discardUnsent());
+    expect(result.current.entries.map((entry) => entry.decision.row.id)).toEqual([rowA.id]);
+    sent.resolve(okOutcome(api.decideRequest(0)));
+    await flush();
+    expect(texts(result)).toContain('Kept 1 session');
+    expect(api.count('decide')).toBe(1);
+  });
+});
+
 describe('useInbox close flow', () => {
   it('reports an error and exits on a later close request when exit fails', async () => {
     const api = createFakeApi(makeList([rowA]));
@@ -663,7 +828,9 @@ describe('useInbox close flow', () => {
     api.fail('exit', circusError('failed', 'exit denied'));
     act(() => api.emitCloseRequested(450_000));
     await flush();
-    expect(texts(result)).toContain('Could not quit: exit denied');
+    expect(result.current.toasts).toContainEqual(
+      expect.objectContaining({ text: 'Couldn’t quit', detail: 'exit denied' }),
+    );
     expect(result.current.closing).toBe(false);
     expect(result.current.finishBy).toBeNull();
     expect(methods(api).slice(-2)).toEqual(['exit', 'closeCancel']);
@@ -760,7 +927,7 @@ describe('useInbox close flow', () => {
 });
 
 describe('settleEffects', () => {
-  const decision = { ticket: 1, action: 'archive' as const, row: rowA, until: null };
+  const decision = { ticket: 1, batchId: 1, action: 'archive' as const, row: rowA, until: null };
   const request: DecideRequest = {
     action: 'archive',
     id: rowA.id,
@@ -783,12 +950,22 @@ describe('settleEffects', () => {
     ],
     [
       'refused, changed',
-      settled({ status: 'refused', wrote: false, reason: 'changed since you looked: mtime' }),
+      settled({
+        status: 'refused',
+        code: 'changed',
+        wrote: false,
+        reason: 'changed since you looked: mtime',
+      }),
+      [false, true, true],
+    ],
+    [
+      'refused, no fingerprint',
+      settled({ status: 'refused', code: 'no_fingerprint', wrote: false, reason: 'no stamp' }),
       [false, true, true],
     ],
     [
       'refused, running',
-      settled({ status: 'refused', wrote: false, reason: 'running' }),
+      settled({ status: 'refused', code: 'running', wrote: false, reason: 'running' }),
       [false, true, false],
     ],
     ['failed', settled({ status: 'failed', wrote: false }), [false, true, false]],

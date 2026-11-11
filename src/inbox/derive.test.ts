@@ -8,6 +8,7 @@ import {
   filterByProject,
   hiddenIds,
   indexRows,
+  narrowRows,
   nextSelection,
   parseMtime,
   positions,
@@ -20,7 +21,7 @@ import {
 
 function pendingEntry(row: SessionRow): OutboxEntry {
   return {
-    decision: { ticket: 1, action: 'archive', row, until: null },
+    decision: { ticket: 1, batchId: 1, action: 'archive', row, until: null },
     state: 'pending',
     sendAt: 4_000,
   };
@@ -154,10 +155,34 @@ describe('filterByProject and projectCounts', () => {
     expect(ids(filterByProject(rows, '/u/a'))).toEqual([d.id, b.id]);
   });
 
-  it('labels each project from its oldest row and sorts case-insensitively', () => {
+  it('narrows to a project and a query together', () => {
+    const index = indexRows(rows);
+    expect(ids(narrowRows(rows, '/u/a', '', index))).toEqual([d.id, b.id]);
+    expect(ids(narrowRows(rows, '/u/b', 'newer', index))).toEqual([c.id]);
+    expect(narrowRows(rows, '/u/a', 'newer', index)).toEqual([]);
+    expect(narrowRows(rows, null, '', index)).toBe(rows);
+  });
+
+  it('labels each project from its oldest row and queues the oldest activity first', () => {
     expect(projectCounts(rows, indexRows(rows))).toEqual([
-      { key: '/u/a', label: 'alpha', pending: 2 },
-      { key: '/u/b', label: 'Beta', pending: 2 },
+      { key: '/u/b', label: 'Beta', pending: 2, oldestMtime: a.mtime },
+      { key: '/u/a', label: 'alpha', pending: 2, oldestMtime: b.mtime },
+    ]);
+  });
+
+  it('breaks a tie in oldest activity by label, case-insensitively', () => {
+    const tied = [
+      makeRow({ id: 'claude-code:x', project_key: '/u/x', project_label: 'Zed' }),
+      makeRow({
+        id: 'claude-code:y',
+        project_key: '/u/y',
+        project_label: 'ant',
+        status: 'finished',
+      }),
+    ];
+    expect(projectCounts(tied, indexRows(tied))).toEqual([
+      { key: '/u/y', label: 'ant', pending: 1, oldestMtime: tied[1]?.mtime },
+      { key: '/u/x', label: 'Zed', pending: 1, oldestMtime: tied[0]?.mtime },
     ]);
   });
 });
@@ -217,15 +242,15 @@ describe('positions and nextSelection', () => {
 });
 
 describe('clientRefusal', () => {
-  it('names the ringleader-finish skill for a running row', () => {
+  it('asks to wait for a running row', () => {
     expect(clientRefusal('archive', makeRow({ label: 'L', running: true }))).toBe(
-      'L is running — finish it from inside with the ringleader-finish skill',
+      'L is still running — try again once it has stopped',
     );
   });
 
   it('refuses while presence is unknown', () => {
-    expect(clientRefusal('harvest', makeRow({ label: 'L', running: null }))).toMatch(
-      /^Can't tell whether L is running/,
+    expect(clientRefusal('harvest', makeRow({ label: 'L', running: null }))).toBe(
+      'Can’t tell whether L is running, so archive, delete and harvest are off for now',
     );
   });
 
@@ -239,14 +264,17 @@ describe('clientRefusal', () => {
     );
   });
 
-  it('refuses a lifecycle-blocked delete, naming delete', () => {
-    expect(
-      clientRefusal(
-        'delete',
-        makeRow({ lifecycle_block: 'cannot archive x: no filesystem transcript lifecycle' }),
-      ),
-    ).toBe('cannot delete x: no filesystem transcript lifecycle');
-  });
+  it.each(['delete', 'harvest', 'archive'] as const)(
+    'refuses a lifecycle-blocked %s, naming the action',
+    (action) => {
+      expect(
+        clientRefusal(
+          action,
+          makeRow({ lifecycle_block: 'cannot archive x: no filesystem transcript lifecycle' }),
+        ),
+      ).toBe(`cannot ${action} x: no filesystem transcript lifecycle`);
+    },
+  );
 
   it('refuses a lifecycle-blocked delete with other text as given', () => {
     expect(clientRefusal('delete', makeRow({ lifecycle_block: 'not a plain file' }))).toBe(

@@ -8,6 +8,7 @@ pub mod error;
 pub mod process;
 pub mod resume;
 pub mod rl;
+pub mod setup;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -37,6 +38,9 @@ pub struct AppState {
     pub list_cache: Option<PathBuf>,
     pub close: Arc<Mutex<CloseGate>>,
     pub preferences: Option<PathBuf>,
+    pub setup_file: Option<PathBuf>,
+    pub download_dir: Option<PathBuf>,
+    pub home: PathBuf,
 }
 
 struct AppearanceMenu {
@@ -76,15 +80,19 @@ fn app_state(app: &AppHandle, close: Arc<Mutex<CloseGate>>) -> AppState {
             None
         }
     };
+    let download_dir = app.path().app_cache_dir().ok();
+    let home = app
+        .path()
+        .home_dir()
+        .unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap_or_default()));
+    let setup_file = setup::setup_path(preferences.as_deref());
+    let installed = setup_file.as_deref().and_then(setup::installed_command);
     let snapshot = EnvSnapshot {
         circus_rl: env_non_empty("CIRCUS_RL"),
         env_label: environment_label.clone(),
         shell: env_non_empty("SHELL"),
         path: env_non_empty("PATH"),
-        home: app
-            .path()
-            .home_dir()
-            .unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap_or_default())),
+        home: home.clone(),
     };
     let resolved = Arc::new(Pending::new());
     {
@@ -95,6 +103,7 @@ fn app_state(app: &AppHandle, close: Arc<Mutex<CloseGate>>) -> AppState {
                 &process::SystemRunner,
                 &snapshot,
                 &settings,
+                installed.as_deref(),
                 &process::is_executable,
             ));
         });
@@ -110,7 +119,10 @@ fn app_state(app: &AppHandle, close: Arc<Mutex<CloseGate>>) -> AppState {
         resume_dry_run: std::env::var("CIRCUS_RESUME_DRY_RUN").is_ok_and(|value| value == "1"),
         list_cache,
         close,
+        setup_file,
         preferences,
+        download_dir,
+        home,
     }
 }
 
@@ -272,13 +284,22 @@ pub fn run() {
             commands::rl_scan,
             commands::rl_tails,
             commands::rl_decide,
+            commands::rl_handoff_preview,
             commands::cached_list,
             commands::app_info,
             commands::resume_session,
+            commands::launch_handoff,
             commands::set_pending,
             commands::close_ack,
             commands::close_cancel,
             commands::app_exit,
+            commands::setup::setup_status,
+            commands::setup::install_ringleader,
+            commands::setup::install_uv,
+            commands::setup::setup_prefs,
+            commands::setup::save_setup_prefs,
+            commands::setup::install_presence,
+            commands::setup::install_agent_extras,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Circus");

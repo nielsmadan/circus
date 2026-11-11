@@ -245,3 +245,135 @@ describe('createMemoryApi', () => {
     expect(handler.mock.calls).toEqual([[450_000]]);
   });
 });
+
+describe('createMemoryApi refusal codes', () => {
+  async function decide(api: ReturnType<typeof createMemoryApi>, req: DecideRequest) {
+    const pending = api.decide(req);
+    await vi.advanceTimersByTimeAsync(2_000);
+    return (await pending).code;
+  }
+
+  it('codes each destructive refusal as ringleader does', async () => {
+    const running = makeRow({ id: 'claude-code:r', running: true });
+    const unsure = makeRow({ id: 'claude-code:u', running: null });
+    const blocked = makeRow({ id: 'opencode:b', lifecycle_block: 'not a plain file' });
+    const api = createMemoryApi(makeList([rowA, running, unsure, blocked]), { latencyMs: 10 });
+    const gone = makeRow({ id: 'claude-code:gone' });
+    expect(
+      await Promise.all([
+        decide(api, request(rowA, { fingerprint: null })),
+        decide(api, request(gone)),
+        decide(api, request(blocked)),
+        decide(api, request(rowA, { mtime: '2026-01-01T00:00:00+00:00' })),
+        decide(api, request(running)),
+        decide(api, request(unsure)),
+      ]),
+    ).toEqual([
+      'no_fingerprint',
+      'gone',
+      'lifecycle_blocked',
+      'changed',
+      'running',
+      'presence_unknown',
+    ]);
+  });
+
+  it('codes each snooze refusal', async () => {
+    const api = createMemoryApi(seed, { latencyMs: 10 });
+    const snooze = (until: string) => request(rowA, { action: 'snooze', until });
+    expect(
+      await Promise.all([
+        decide(api, snooze('2026-13-45T99:99:99+00:00')),
+        decide(api, snooze('2026-10-20T09:00:00')),
+        decide(api, snooze('2026-10-01T09:00:00+00:00')),
+      ]),
+    ).toEqual(['until_invalid', 'until_naive', 'until_past']);
+  });
+});
+
+describe('createMemoryApi hand-off', () => {
+  const preview = async (
+    api: ReturnType<typeof createMemoryApi>,
+    project_key: string,
+    agent: string,
+  ) => {
+    const pending = api.previewHandoff({ project_key, agent });
+    await vi.advanceTimersByTimeAsync(10);
+    return pending;
+  };
+
+  it('plans a hand-off of a waiting project to an installed agent', async () => {
+    const api = createMemoryApi(seed, { latencyMs: 10 });
+    expect(await preview(api, rowA.project_key, 'codex')).toEqual({
+      version: 1,
+      kind: 'handoff',
+      purpose: 'triage',
+      status: 'ok',
+      code: null,
+      reason: null,
+      source: 'codex',
+      agent: 'codex',
+      project_key: rowA.project_key,
+      cwd: rowA.project_key,
+      argv: ['codex', 'triage prompt'],
+    });
+  });
+
+  it('refuses a project with nothing waiting before an agent that is not installed', async () => {
+    const api = createMemoryApi(seed, { latencyMs: 10 });
+    expect(await preview(api, '/nowhere', 'pi')).toMatchObject({
+      status: 'refused',
+      code: 'nothing_to_triage',
+      cwd: null,
+      argv: null,
+    });
+    expect(await preview(api, rowA.project_key, 'pi')).toMatchObject({
+      status: 'refused',
+      code: 'agent_not_installed',
+      agent: 'pi',
+    });
+  });
+
+  it('launches nothing and returns the command it would run', async () => {
+    const api = createMemoryApi(seed, { latencyMs: 10 });
+    const launch = api.launchHandoff({ project_key: '/p', agent: 'codex' });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await launch).toEqual({
+      command: 'rl handoff triage --project=/p --agent=codex',
+      launched: false,
+      via: 'iterm2',
+    });
+  });
+});
+
+describe('createMemoryApi setup', () => {
+  const settle = async <T>(pending: Promise<T>) => {
+    await vi.advanceTimersByTimeAsync(2_000);
+    return pending;
+  };
+
+  it('reports the install state it was started in', async () => {
+    const states = await Promise.all(
+      (['missing', 'too_old', 'outdated', 'current'] as const).map((setup) =>
+        settle(createMemoryApi(seed, { setup }).setupStatus()),
+      ),
+    );
+    expect(states.map((status) => [status.state, status.installed])).toEqual([
+      ['missing', null],
+      ['too_old', '0.1.0'],
+      ['outdated', '0.2.0'],
+      ['current', '0.3.0'],
+    ]);
+  });
+
+  it('installs the latest version and keeps the saved answers', async () => {
+    const api = createMemoryApi(seed, { setup: 'missing', onboarded: false });
+    expect(await settle(api.installRingleader())).toMatchObject({
+      state: 'current',
+      installed: '0.3.0',
+    });
+    expect(await settle(api.setupPrefs())).toEqual({ onboarded: false, prompt_updates: true });
+    await settle(api.saveSetupPrefs({ onboarded: true, prompt_updates: false }));
+    expect(await settle(api.setupPrefs())).toEqual({ onboarded: true, prompt_updates: false });
+  });
+});

@@ -1,0 +1,9 @@
+{
+  "repository": "nielsmadan/ringleader",
+  "minimum": "0.2.0",
+  "latest": "0.2.0",
+  "wheel": "ringleader-0.2.0-py3-none-any.whl",
+  "sha256": "7c7450496fdec8233f1ebaf3bb25869c4342d38efa0e79355e21842ab408f158",
+  "uv_version": "0.13.7",
+  "uv_installer_sha256": "d263ee68314cf5bea36b08e6bd9e2c4563240d7adb73756cf33af5c199b92db4"
+}

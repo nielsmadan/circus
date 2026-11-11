@@ -94,6 +94,8 @@ const click = (n: number) => {
   });
 };
 const conversation = () => screen.getByRole('region', { name: 'Conversation' });
+const detailOf = (text: string) =>
+  within(conversation()).getByText(text, { selector: 'details p' });
 const transcript = () =>
   [...conversation().querySelectorAll('pre')].map((pre) => pre.textContent).join('');
 const skeleton = () => conversation().querySelector('[aria-busy="true"]');
@@ -244,10 +246,11 @@ describe('reading-pane conversation', () => {
       await vi.advanceTimersByTimeAsync(0);
     });
 
-    expect(conversation()).toHaveTextContent('Conversation unavailable: transcript not found');
+    expect(within(conversation()).getByText('Conversation unavailable')).toBeVisible();
+    expect(detailOf('transcript not found')).toBeInTheDocument();
   });
 
-  it('shows a row whose id circus could not pass to rl as unavailable, and its neighbours', async () => {
+  it('shows a row whose id circus cannot pass on as unavailable, and its neighbours', async () => {
     await renderInbox();
     await advance();
     const call = held[0];
@@ -257,15 +260,14 @@ describe('reading-pane conversation', () => {
       await vi.advanceTimersByTimeAsync(0);
     });
 
-    expect(conversation()).toHaveTextContent(
-      'Conversation unavailable: circus cannot pass this session id to rl',
-    );
+    expect(within(conversation()).getByText('Conversation unavailable')).toBeVisible();
+    expect(detailOf('Circus can’t open this session: its id is unusual')).toBeInTheDocument();
     expect(screen.queryByText(/May be out of date/)).toBeNull();
     press('KeyJ');
     expect(transcript()).toBe(`tail of ${id(1)}`);
   });
 
-  it('names the export command for a truncated tail', async () => {
+  it('says older messages are not shown for a truncated tail', async () => {
     await renderInbox();
     await advance();
     const call = held[0];
@@ -275,7 +277,7 @@ describe('reading-pane conversation', () => {
     });
 
     expect(conversation()).toHaveTextContent(
-      'Showing the last 50,000 characters — rl data export r0 writes the whole conversation',
+      'Showing the last 50,000 characters — older messages aren’t shown here',
     );
   });
 
@@ -291,9 +293,8 @@ describe('reading-pane conversation', () => {
       held[1]?.reply.reject(circusError('timeout', 'rl data export timed out'));
       await vi.advanceTimersByTimeAsync(0);
     });
-    expect(conversation()).toHaveTextContent(
-      'Couldn’t load the conversation: rl data export timed out',
-    );
+    expect(within(conversation()).getByText('Couldn’t load the conversation')).toBeVisible();
+    expect(detailOf('rl data export timed out')).toBeInTheDocument();
 
     click(0);
     expect(transcript()).toBe(`tail of ${id(0)}`);
@@ -410,9 +411,8 @@ describe('reading-pane conversation', () => {
       held.at(-1)?.reply.reject(circusError('timeout', 'rl data export timed out'));
       await vi.advanceTimersByTimeAsync(0);
     });
-    expect(conversation()).toHaveTextContent(
-      'Couldn’t refresh the conversation: rl data export timed out',
-    );
+    expect(within(conversation()).getByText('Couldn’t refresh the conversation')).toBeVisible();
+    expect(detailOf('rl data export timed out')).toBeInTheDocument();
     expect(transcript()).toBe(`tail of ${id(0)}`);
   });
 

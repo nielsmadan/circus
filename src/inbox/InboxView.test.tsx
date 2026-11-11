@@ -1,7 +1,7 @@
 import { cleanup, act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../App';
-import type { CircusError, ListResponse } from '../api/types';
+import type { AgentInfo, CircusError, ListResponse, NextStep } from '../api/types';
 import { ShortcutKitProvider, useShortcuts } from '@shortcutkit/react';
 import { inboxListContext } from '../shortcuts/contexts';
 import {
@@ -11,7 +11,7 @@ import {
   type Deferred,
   type FakeApi,
 } from '../test/fakeApi';
-import { makeList, makeRow } from '../test/fixtures';
+import { makeHome, makeList, makeRow, makeStep } from '../test/fixtures';
 import { shortcutHarness, type ShortcutHarness } from '../test/shortcuts';
 import { scrollToShow } from './rowWindow';
 
@@ -146,6 +146,7 @@ beforeEach(async () => {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  window.localStorage.clear();
 });
 
 describe('InboxView list and reading pane', () => {
@@ -333,7 +334,7 @@ describe('InboxView decisions', () => {
     const toast = screen.getByText('Archive “fix parser”').parentElement as HTMLElement;
     click(within(toast).getByRole('button', { name: /Undo/ }));
     expect(screen.getByText('Undid archive “fix parser”')).toBeInTheDocument();
-    press('Digit3', { metaKey: true });
+    press('Digit1', { metaKey: true });
     expect(shownIds()).toEqual([parser.id, login.id, docs.id]);
     await advance(4_000);
     expect(api.count('decide')).toBe(0);
@@ -408,7 +409,8 @@ describe('InboxView decisions', () => {
     press('KeyO');
     await flush();
     expect(api.argsOf('resume')).toEqual([[parser.id]]);
-    expect(screen.getByText(`Dry run: rl resume ${parser.id}`)).toBeInTheDocument();
+    const toast = screen.getByText('Dry run — would open “fix parser”');
+    expect(toast.closest('[title]')).toHaveAttribute('title', `rl resume ${parser.id}`);
   });
 
   it('refuses archiving a running row and marks it running', async () => {
@@ -418,9 +420,7 @@ describe('InboxView decisions', () => {
     expect(within(option).getByText('running')).toBeInTheDocument();
     press('KeyE', { shiftKey: true });
     expect(
-      screen.getByText(
-        'busy one is running — finish it from inside with the ringleader-finish skill',
-      ),
+      screen.getByText('busy one is still running — try again once it has stopped'),
     ).toBeInTheDocument();
     expect(shownIds()).toEqual([busy.id]);
     await advance(4_000);
@@ -486,10 +486,10 @@ describe('InboxView decisions', () => {
     press('KeyE', { shiftKey: true });
     await advance(1_000);
     press('Digit2', { metaKey: true });
-    expect(screen.getByRole('tab', { name: 'Triage' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Archive' })).toHaveAttribute('aria-selected', 'true');
     press('KeyJ');
     await advance(1_000);
-    press('Digit3', { metaKey: true });
+    press('Digit1', { metaKey: true });
     expect(statusBar()).toHaveTextContent('1 waiting');
     expect(selectedId()).toBe(login.id);
     await advance(1_999);
@@ -558,7 +558,25 @@ describe('InboxView project filter and undo across splits', () => {
     press('KeyE', { shiftKey: true });
     press('KeyE', { shiftKey: true });
     expect(
-      screen.getByText('No sessions in this project — Esc shows all projects'),
+      screen.getByText('This project is done. Next: proj-00 (1 waiting) — Enter'),
+    ).toBeInTheDocument();
+    press('Enter');
+    expect(within(projects).getByRole('button', { name: /proj-00/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+    expect(screen.getByRole('tab', { name: /All/ })).toHaveAttribute('aria-selected', 'true');
+    expect(shownIds()).toEqual([wokeOlder.id, wokeNewer.id, login.id]);
+    expect(api.count('resume')).toBe(0);
+  });
+
+  it('says the last project is done when no other project waits', async () => {
+    await renderInbox(makeList([parser]));
+    const projects = screen.getByRole('navigation', { name: 'Projects' });
+    click(within(projects).getByRole('button', { name: /proj-01/ }));
+    press('KeyE', { shiftKey: true });
+    expect(
+      screen.getByText('This project is done — all caught up. Esc shows all projects'),
     ).toBeInTheDocument();
   });
 
@@ -574,28 +592,53 @@ describe('InboxView project filter and undo across splits', () => {
 });
 
 describe('InboxView banners and load states', () => {
-  it('shows the stale roundup and unknown presence banners', async () => {
+  it('shows the unknown presence banner', async () => {
+    await renderInbox(
+      makeList(ROWS, { presence: { state: 'unknown', problem: 'ps exited with 1' } }),
+    );
+    const banner = screen.getByRole('note');
+    expect(banner).toHaveTextContent(
+      'Can’t tell which sessions are running, so archive, delete and harvest are off for now.',
+    );
+    expect(within(banner).getByText('ps exited with 1')).toBeInTheDocument();
+  });
+
+  it('turns on running-session detection from the banner and rescans', async () => {
     await renderInbox(
       makeList(ROWS, {
-        roundup: {
-          last_at: '2026-10-13T12:00:00+00:00',
-          age_human: '3d ago',
-          stale: true,
-          stale_hours: 8,
-        },
-        presence: { state: 'unknown', problem: 'ps exited with 1' },
+        presence: { state: 'unknown', problem: 'not installed', code: 'not_installed' },
       }),
     );
-    expect(
-      screen.getByText(
-        'Roundup last ran 3d ago — run it with `rl roundup`; the Enrich tab will run it later',
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Can't tell which sessions are running — archive, delete and harvest will be refused. ps exited with 1",
-      ),
-    ).toBeInTheDocument();
+    const scans = api.count('scan');
+    click(screen.getByRole('button', { name: 'Turn on running-session detection' }));
+    await flush();
+    expect(api.count('installPresence')).toBe(1);
+    expect(api.count('scan')).toBe(scans + 1);
+    expect(screen.getByText('Running-session detection is on')).toBeInTheDocument();
+  });
+
+  it('turns the detection button off while installing and reports a failure', async () => {
+    await renderInbox(
+      makeList(ROWS, {
+        presence: { state: 'unknown', problem: 'not installed', code: 'not_installed' },
+      }),
+    );
+    const install = api.defer('installPresence');
+    click(screen.getByRole('button', { name: 'Turn on running-session detection' }));
+    expect(screen.getByRole('button', { name: 'Turning on…' })).toBeDisabled();
+    install.reject({
+      kind: 'failed',
+      message: 'Could not turn on running-session detection',
+      exit_code: 1,
+      stderr_tail: 'codex: config is read-only',
+    });
+    await flush();
+    const toast = screen.getByText('Couldn’t turn on running-session detection');
+    expect(toast.closest('[title]')).toHaveAttribute(
+      'title',
+      'Could not turn on running-session detection\ncodex: config is read-only',
+    );
+    expect(screen.getByRole('button', { name: 'Turn on running-session detection' })).toBeEnabled();
   });
 
   it('disables decisions in a sandbox whose registry is outside the world', async () => {
@@ -615,47 +658,495 @@ describe('InboxView banners and load states', () => {
     expect(api.count('decide')).toBe(0);
   });
 
-  it('replaces the Inbox with the rl_not_found message', async () => {
-    const message = 'Could not find rl. Set CIRCUS_RL or rl_command in /u/settings.json';
-    await renderInbox(makeList(ROWS), (fake) => {
-      fake.setDefault('list', () => Promise.reject(circusError('rl_not_found', message)));
-      fake.setDefault('scan', () => Promise.reject(circusError('rl_not_found', message)));
-    });
-    expect(screen.getByRole('alert')).toHaveTextContent(message);
-    expect(screen.queryByRole('listbox', { name: 'Sessions' })).toBeNull();
-  });
-
-  it('shows the rl_too_old message', async () => {
-    const message = 'rl is too old for circus — run `just install` in ringleader';
-    await renderInbox(makeList(ROWS), (fake) => {
-      fake.setDefault('list', () => Promise.reject(circusError('rl_too_old', message)));
-      fake.setDefault('scan', () => Promise.reject(circusError('rl_too_old', message)));
-    });
-    expect(screen.getByRole('alert')).toHaveTextContent(message);
-  });
-
-  it('keeps a cached list and shows the rl_not_found message as a banner', async () => {
-    const message = 'Could not find rl. Set CIRCUS_RL or rl_command in /u/settings.json';
-    await renderInbox(makeList(ROWS), (fake) => {
-      fake.setDefault('cachedList', () => Promise.resolve(makeList([parser])));
-      fake.setDefault('list', () => Promise.reject(circusError('rl_not_found', message)));
-      fake.setDefault('scan', () => Promise.reject(circusError('rl_not_found', message)));
-    });
-    expect(shownIds()).toEqual([parser.id]);
-    expect(screen.getByRole('alert')).toHaveTextContent(message);
-  });
+  it.each(['rl_not_found', 'rl_too_old'] as const)(
+    'replaces the Inbox with setup when loading fails with %s',
+    async (kind) => {
+      await renderInbox(makeList(ROWS), (fake) => {
+        fake.setDefault('cachedList', () => Promise.resolve(makeList([parser])));
+        fake.setDefault('list', () => Promise.reject(circusError(kind, 'nope')));
+        fake.setDefault('scan', () => Promise.reject(circusError(kind, 'nope')));
+      });
+      expect(screen.getByRole('heading', { name: 'Circus needs ringleader' })).toBeVisible();
+      expect(screen.queryByRole('listbox', { name: 'Sessions' })).toBeNull();
+    },
+  );
 
   it('offers Retry for other load errors', async () => {
     await renderInbox(makeList(ROWS), (fake) => {
       fake.fail('list', circusError('failed', 'rl exited with code 2'));
       fake.fail('scan', circusError('failed', 'rl exited with code 2'));
     });
-    expect(screen.getByRole('alert')).toHaveTextContent('rl exited with code 2');
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Couldn’t load sessions');
+    expect(
+      within(alert).getByText('rl exited with code 2', { selector: 'details p' }),
+    ).toBeInTheDocument();
     const before = api.count('list');
     click(screen.getByRole('button', { name: 'Retry' }));
     await flush();
     expect(api.count('list')).toBe(before + 1);
     expect(shownIds()).toEqual([parser.id, login.id, docs.id]);
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
+describe('InboxView next steps and sidebar', () => {
+  const snoozed = makeRow({
+    id: 'claude-code:snoozed',
+    label: 'wait for review',
+    snoozed_at: '2026-10-10T12:00:00+00:00',
+    snoozed_until: '2026-10-18T12:00:00+00:00',
+  });
+  const home = makeHome({
+    counts: {
+      triage_total: 5,
+      live: 1,
+      unclassified: 4,
+      blocked: 0,
+      stale: 0,
+      kept: 2,
+      projects: 2,
+      spread_projects: 0,
+    },
+    projects: [
+      {
+        key: '/u/work/proj-01',
+        label: 'proj-01',
+        pending: 2,
+        unclassified: 2,
+        oldest_mtime: '2026-10-13T12:00:00+00:00',
+        newest_mtime: '2026-10-15T12:00:00+00:00',
+      },
+    ],
+    next_steps: [
+      makeStep('roundup'),
+      makeStep('woke', { count: 2 }),
+      makeStep('recent', { count: 3 }),
+      makeStep('publish', { count: 4 }),
+      makeStep('project', { count: 2, project_key: '/u/work/proj-01' }),
+    ],
+    in_flight: [login.id],
+    waking_soon: [snoozed.id],
+    rows: [snoozed],
+  });
+  const withHome = () =>
+    makeList(ROWS, {
+      home,
+      roundup: {
+        last_at: '2026-10-13T12:00:00+00:00',
+        age_human: '3d ago',
+        stale: true,
+        stale_hours: 8,
+      },
+    });
+  const strip = () => screen.getByRole('region', { name: 'Next steps' });
+  const stepItem = (text: string) =>
+    within(strip())
+      .getAllByRole('listitem')
+      .find((item) => item.textContent?.includes(text)) as HTMLElement;
+
+  it('lists every next step in order with the counts', async () => {
+    await renderInbox(withHome());
+    expect(
+      within(strip())
+        .getAllByRole('listitem')
+        .map((item) => item.textContent),
+    ).toEqual([
+      'Next:Sessions were last cleaned up 3d ago',
+      '2 snoozed sessions woke upReview',
+      '3 sessions from the last 7 daysTriage',
+      '4 harvests to publishOpen Harvests',
+      'proj-01: 2 waiting, oldest 3dTriage',
+    ]);
+    expect(within(strip()).getByText('5 waiting · 1 live · 4 unclassified · 2 kept')).toBeVisible();
+  });
+
+  it('opens the Woke split from its step', async () => {
+    await renderInbox(withHome());
+    click(within(stepItem('woke up')).getByRole('button', { name: 'Review' }));
+    expect(screen.getByRole('tab', { name: /Woke/ })).toHaveAttribute('aria-selected', 'true');
+    expect(shownIds()).toEqual([wokeOlder.id, wokeNewer.id]);
+  });
+
+  it('filters to the project from its step, across all splits', async () => {
+    await renderInbox(withHome());
+    click(within(stepItem('proj-01')).getByRole('button', { name: 'Triage' }));
+    const projects = screen.getByRole('navigation', { name: 'Projects' });
+    expect(within(projects).getByRole('button', { name: /proj-01/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+    expect(screen.getByRole('tab', { name: /All/ })).toHaveAttribute('aria-selected', 'true');
+    expect(shownIds()).toEqual([docs.id, parser.id]);
+  });
+
+  it('switches to the Harvests tab from the publish step', async () => {
+    await renderInbox(withHome());
+    click(within(stepItem('harvests')).getByRole('button', { name: 'Open Harvests' }));
+    expect(screen.getByRole('tab', { name: 'Harvests' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('resumes the session a resume step names', async () => {
+    await renderInbox(
+      makeList(ROWS, { home: makeHome({ next_steps: [makeStep('resume', { id: login.id })] }) }),
+    );
+    click(within(stepItem('fix flaky login')).getByRole('button', { name: 'Resume' }));
+    await flush();
+    expect(api.calls.filter((c) => c.method === 'resume').map((c) => c.args)).toEqual([[login.id]]);
+  });
+
+  it('counts a project step from the rows still shown, hiding pending decisions', async () => {
+    await renderInbox(withHome());
+    press('KeyE', { shiftKey: true });
+    expect(stepItem('proj-01')).toHaveTextContent('proj-01: 1 waiting, oldest 3dTriage');
+  });
+
+  it('skips a project step whose project has nothing left to show', async () => {
+    await renderInbox(
+      makeList(ROWS, {
+        home: makeHome({ next_steps: [makeStep('project', { count: 1, project_key: '/u/gone' })] }),
+      }),
+    );
+    expect(within(strip()).getByText('All caught up')).toBeVisible();
+  });
+
+  it('skips a step of a kind it does not know and shows the rest', async () => {
+    const unknown = { ...makeStep('woke', { count: 2 }), kind: 'mystery' } as unknown as NextStep;
+    await renderInbox(
+      makeList(ROWS, {
+        home: makeHome({ next_steps: [unknown, makeStep('recent', { count: 3 })] }),
+      }),
+    );
+    expect(
+      within(strip())
+        .getAllByRole('listitem')
+        .map((item) => item.textContent),
+    ).toEqual(['Next:3 sessions from the last 7 daysTriage']);
+  });
+
+  it('says all caught up when there is no next step', async () => {
+    await renderInbox(makeList(ROWS, { home: makeHome() }));
+    expect(within(strip()).getByText('All caught up')).toBeVisible();
+  });
+
+  it('lists in-flight sessions that resume on click and the sessions waking soon', async () => {
+    await renderInbox(withHome());
+    const inFlight = screen.getByRole('region', { name: 'In flight' });
+    click(within(inFlight).getByRole('button', { name: /fix flaky login/ }));
+    await flush();
+    expect(api.calls.filter((c) => c.method === 'resume').map((c) => c.args)).toEqual([[login.id]]);
+    const waking = screen.getByRole('region', { name: 'Waking soon' });
+    expect(within(waking).getByRole('listitem')).toHaveTextContent('wait for reviewin 2d');
+  });
+
+  it("shows each row's status", async () => {
+    await renderInbox(makeList([makeRow({ id: 'claude-code:b', status: 'blocked' })]));
+    expect(within(listbox()).getByRole('option')).toHaveTextContent('blocked');
+  });
+});
+
+describe('InboxView triage with an agent', () => {
+  const claude = { source: 'claude-code', agent: 'claude', installed: true };
+  const codex = { source: 'codex', agent: 'codex', installed: true };
+  const pi = { source: 'pi', agent: 'pi', installed: false };
+  const withAgents = (agents: AgentInfo[]) => makeList(ROWS, { agents });
+
+  it("hands the selected row's project to the only installed agent", async () => {
+    await renderInbox(withAgents([claude, pi]));
+    press('KeyT');
+    await flush();
+    await flush();
+    const request = { project_key: '/u/work/proj-01', agent: 'claude-code' };
+    expect(api.argsOf('previewHandoff')).toEqual([[request]]);
+    expect(api.argsOf('launchHandoff')).toEqual([[request]]);
+    expect(screen.getByText('Opened claude to triage proj-01 in iTerm2')).toBeInTheDocument();
+  });
+
+  it('asks which agent when several are installed, then hands off to the pick', async () => {
+    await renderInbox(withAgents([claude, codex]));
+    press('KeyT');
+    const dialog = screen.getByRole('dialog', { name: 'Triage proj-01 with…' });
+    expect(
+      within(dialog)
+        .getAllByRole('button')
+        .map((b) => b.textContent),
+    ).toEqual(['claude', 'codex']);
+    click(within(dialog).getByRole('button', { name: 'codex' }));
+    await flush();
+    await flush();
+    expect(api.argsOf('launchHandoff')).toEqual([
+      [{ project_key: '/u/work/proj-01', agent: 'codex' }],
+    ]);
+  });
+
+  it("triages the filtered project even when another project's row is selected", async () => {
+    await renderInbox(withAgents([claude]));
+    const projects = screen.getByRole('navigation', { name: 'Projects' });
+    click(within(projects).getByRole('button', { name: /proj-00/ }));
+    press('KeyT');
+    await flush();
+    expect(api.argsOf('previewHandoff')).toEqual([
+      [{ project_key: '/u/work/proj-00', agent: 'claude-code' }],
+    ]);
+  });
+
+  it('reports a refusal in its own words and launches nothing', async () => {
+    await renderInbox(withAgents([claude]), (fake) =>
+      fake.reply('previewHandoff', {
+        version: 1,
+        kind: 'handoff',
+        purpose: 'triage',
+        status: 'refused',
+        code: 'nothing_to_triage',
+        reason: 'no project /u/work/proj-01 is waiting for triage',
+        source: 'claude-code',
+        agent: 'claude',
+        project_key: '/u/work/proj-01',
+        cwd: null,
+        argv: null,
+      }),
+    );
+    press('KeyT');
+    await flush();
+    await flush();
+    expect(screen.getByText('Nothing in proj-01 is waiting for triage')).toBeInTheDocument();
+    expect(api.count('launchHandoff')).toBe(0);
+  });
+
+  it('reports a failed preview and launches nothing', async () => {
+    await renderInbox(withAgents([claude]), (fake) =>
+      fake.fail('previewHandoff', circusError('timeout', 'took too long')),
+    );
+    press('KeyT');
+    await flush();
+    const toast = screen.getByText('Couldn’t start triage of proj-01');
+    expect(toast.closest('[title]')).toHaveAttribute('title', 'took too long');
+    expect(api.count('launchHandoff')).toBe(0);
+  });
+
+  it('reports a failed launch', async () => {
+    await renderInbox(withAgents([claude]), (fake) =>
+      fake.fail('launchHandoff', circusError('launch', 'iTerm2 did not answer')),
+    );
+    press('KeyT');
+    await flush();
+    await flush();
+    const toast = screen.getByText('Couldn’t start triage of proj-01');
+    expect(toast.closest('[title]')).toHaveAttribute('title', 'iTerm2 did not answer');
+  });
+
+  it('focuses the agent picked last time', async () => {
+    window.localStorage.setItem('circus.triage-agent', 'codex');
+    await renderInbox(withAgents([claude, codex]));
+    press('KeyT');
+    const dialog = screen.getByRole('dialog', { name: 'Triage proj-01 with…' });
+    expect(within(dialog).getByRole('button', { name: 'codex' })).toHaveFocus();
+  });
+
+  it('remembers the picked agent for next time', async () => {
+    await renderInbox(withAgents([claude, codex]));
+    press('KeyT');
+    click(within(screen.getByRole('dialog')).getByRole('button', { name: 'codex' }));
+    await flush();
+    expect(window.localStorage.getItem('circus.triage-agent')).toBe('codex');
+  });
+
+  it('keeps the palette closed while the agent picker is open', async () => {
+    await renderInbox(withAgents([claude, codex]));
+    press('KeyT');
+    press('KeyK', { metaKey: true });
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull();
+  });
+
+  it("triages the marked row's project rather than the selected row's", async () => {
+    await renderInbox(withAgents([claude]));
+    press('KeyJ');
+    press('KeyX');
+    press('KeyK');
+    press('KeyT');
+    await flush();
+    expect(api.argsOf('previewHandoff')).toEqual([
+      [{ project_key: '/u/work/proj-00', agent: 'claude-code' }],
+    ]);
+  });
+
+  it('refuses to triage marked rows from several projects', async () => {
+    await renderInbox(withAgents([claude]));
+    press('KeyX');
+    press('KeyJ');
+    press('KeyX');
+    press('KeyT');
+    expect(
+      screen.getByText(
+        'The marked sessions are in several projects — triage one project at a time',
+      ),
+    ).toBeInTheDocument();
+    expect(api.count('previewHandoff')).toBe(0);
+  });
+
+  it('says when no agent is installed', async () => {
+    await renderInbox(withAgents([pi]));
+    press('KeyT');
+    expect(screen.getByText('No agent is installed to triage with')).toBeInTheDocument();
+    expect(api.count('previewHandoff')).toBe(0);
+  });
+});
+
+describe('InboxView marking and bulk decisions', () => {
+  const marked = () =>
+    within(listbox())
+      .queryAllByRole('option')
+      .filter((option) => option.getAttribute('aria-checked') === 'true')
+      .map((option) => option.dataset.rowId);
+  const decidedIds = () => api.argsOf('decide').map(([request]) => request.id);
+  const markParserAndLogin = () => {
+    press('KeyX');
+    press('KeyJ');
+    press('KeyX');
+  };
+
+  it('toggles a mark on the selected row with x and counts the marks', async () => {
+    await renderInbox();
+    markParserAndLogin();
+    expect(marked()).toEqual([parser.id, login.id]);
+    expect(screen.getByText('2 marked')).toBeInTheDocument();
+    press('KeyX');
+    expect(marked()).toEqual([parser.id]);
+  });
+
+  it('marks every shown row with * and clears them with a second *', async () => {
+    await renderInbox();
+    press('Digit8', { shiftKey: true });
+    expect(marked()).toEqual([parser.id, login.id, docs.id]);
+    press('Digit8', { shiftKey: true });
+    expect(marked()).toEqual([]);
+  });
+
+  it('applies keep to every marked row under one toast and one summary', async () => {
+    await renderInbox();
+    markParserAndLogin();
+    press('KeyS');
+    expect(screen.getByText('Keep 2 sessions')).toBeInTheDocument();
+    expect(shownIds()).toEqual([docs.id]);
+    expect(marked()).toEqual([]);
+    await advance(4_000);
+    await flush();
+    expect(decidedIds()).toEqual([parser.id, login.id]);
+    expect(decideActions()).toEqual(['keep', 'keep']);
+    expect(screen.getByText('Kept 2 sessions')).toBeInTheDocument();
+  });
+
+  it('undoes a whole bulk decision with one z', async () => {
+    await renderInbox();
+    markParserAndLogin();
+    press('KeyS');
+    press('KeyZ');
+    expect(screen.getByText('Undid keep of 2 sessions')).toBeInTheDocument();
+    expect(shownIds()).toEqual([parser.id, login.id, docs.id]);
+    await advance(4_000);
+    expect(api.count('decide')).toBe(0);
+  });
+
+  it('confirms a bulk archive and sends nothing when cancelled', async () => {
+    await renderInbox();
+    markParserAndLogin();
+    press('KeyE', { shiftKey: true });
+    const dialog = screen.getByRole('alertdialog', { name: 'Archive 2 sessions?' });
+    click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(marked()).toEqual([parser.id, login.id]);
+    await advance(4_000);
+    expect(api.count('decide')).toBe(0);
+  });
+
+  it('sends a confirmed bulk delete for every marked row', async () => {
+    await renderInbox();
+    markParserAndLogin();
+    press('Digit3', { shiftKey: true });
+    const dialog = screen.getByRole('alertdialog', {
+      name: 'Delete 2 sessions permanently?',
+    });
+    expect(dialog).toHaveTextContent('Nothing is harvested.');
+    click(within(dialog).getByRole('button', { name: 'Delete 2' }));
+    expect(screen.getByText('Deleting 2 sessions in 10 s')).toBeInTheDocument();
+    await advance(10_000);
+    await flush();
+    expect(decideActions()).toEqual(['delete', 'delete']);
+    expect(decidedIds()).toEqual([parser.id, login.id]);
+  });
+
+  it('refuses to harvest several sessions at once', async () => {
+    await renderInbox();
+    markParserAndLogin();
+    press('KeyE');
+    expect(
+      screen.getByText('Harvest one session at a time — unmark all but one'),
+    ).toBeInTheDocument();
+    expect(marked()).toEqual([parser.id, login.id]);
+  });
+
+  it('decides on the single marked row rather than the selected one', async () => {
+    await renderInbox();
+    press('KeyX');
+    press('KeyJ');
+    press('KeyS');
+    expect(screen.getByText('Keep “fix parser”')).toBeInTheDocument();
+    expect(shownIds()).toEqual([login.id, docs.id]);
+  });
+
+  it('resumes the single marked row rather than the selected one', async () => {
+    await renderInbox();
+    press('KeyJ');
+    press('KeyX');
+    press('KeyK');
+    press('KeyO');
+    await flush();
+    expect(api.argsOf('resume')).toEqual([[login.id]]);
+  });
+
+  it('resumes one session at a time', async () => {
+    await renderInbox();
+    markParserAndLogin();
+    press('KeyO');
+    await flush();
+    expect(
+      screen.getByText('Resume one session at a time — unmark all but one'),
+    ).toBeInTheDocument();
+    expect(api.count('resume')).toBe(0);
+  });
+
+  it('styles a bulk delete as destructive and a bulk archive as normal', async () => {
+    await renderInbox();
+    markParserAndLogin();
+    press('Digit3', { shiftKey: true });
+    expect(screen.getByRole('button', { name: 'Delete 2' }).className).toContain('bg-red-600');
+    click(screen.getByRole('button', { name: 'Cancel' }));
+    press('KeyE', { shiftKey: true });
+    expect(screen.getByRole('button', { name: 'Archive 2' }).className).toContain('bg-blue-600');
+  });
+
+  it('keeps Tab inside the confirmation and the palette closed over it', async () => {
+    await renderInbox();
+    markParserAndLogin();
+    press('KeyE', { shiftKey: true });
+    const dialog = screen.getByRole('alertdialog', { name: 'Archive 2 sessions?' });
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
+    const confirm = within(dialog).getByRole('button', { name: 'Archive 2' });
+    expect(cancel).toHaveFocus();
+    fireEvent.keyDown(cancel, { key: 'Tab', shiftKey: true });
+    expect(confirm).toHaveFocus();
+    fireEvent.keyDown(confirm, { key: 'Tab' });
+    expect(cancel).toHaveFocus();
+    press('KeyK', { metaKey: true });
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull();
+  });
+
+  it('clears the marks when the split changes', async () => {
+    await renderInbox();
+    press('KeyX');
+    expect(marked()).toHaveLength(1);
+    press('Tab');
+    press('Tab', { shiftKey: true });
+    expect(marked()).toEqual([]);
   });
 });

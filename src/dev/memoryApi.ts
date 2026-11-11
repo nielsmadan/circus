@@ -5,11 +5,21 @@ import {
   type AppInfo,
   type CircusError,
   type DecideOutcome,
+  type AgentInfo,
   type DecideRequest,
+  type DecisionAction,
+  type HandoffCode,
+  type HandoffResponse,
   type ListResponse,
+  type OutcomeCode,
+  type SetupPrefs,
+  type InstallState,
+  type SetupStatus,
   type SessionRow,
   type TailItem,
 } from '../api/types';
+import { lifecycleText } from '../inbox/derive';
+import { fakeHome } from './fakeHome';
 
 export interface MemoryApi extends CircusApi {
   requestClose(): void;
@@ -19,6 +29,8 @@ export interface MemoryApiOptions {
   readonly latencyMs?: number;
   readonly harvestDelayMs?: number;
   readonly cache?: boolean;
+  readonly setup?: InstallState;
+  readonly onboarded?: boolean;
 }
 
 const FAKE_WORLD = '/fake/world';
@@ -43,6 +55,12 @@ const REPLIES = Object.freeze([
   'Refactored the export into a pure function and moved the I/O to the caller.',
   'Checked the docs; the flag was renamed two releases ago.',
   'Reverted the experiment and left a note in the plan.',
+]);
+
+const FAKE_AGENTS: readonly AgentInfo[] = Object.freeze([
+  { source: 'claude-code', agent: 'claude', installed: true },
+  { source: 'codex', agent: 'codex', installed: true },
+  { source: 'pi', agent: 'pi', installed: false },
 ]);
 
 const APP_INFO: AppInfo = {
@@ -91,6 +109,7 @@ function outcome(
     kind: 'outcome',
     action: request.action,
     id: request.id,
+    code: null,
     reason: null,
     wrote: false,
     path: null,
@@ -101,17 +120,15 @@ function outcome(
 
 function refusedOutcome(
   request: DecideRequest,
+  code: OutcomeCode,
   reason: string,
   message: string = reason,
 ): DecideOutcome {
-  return outcome(request, { status: 'refused', reason, message });
+  return outcome(request, { status: 'refused', code, reason, message });
 }
 
-// ringleader computes lifecycle_block for archive; the same transcript check names each operation
-function lifecycleReason(row: SessionRow, action: string): string | null {
-  const block = row.lifecycle_block;
-  if (block === null) return null;
-  return block.startsWith('cannot archive ') ? `cannot ${action} ${block.slice(15)}` : block;
+function lifecycleReason(row: SessionRow, action: DecisionAction): string | null {
+  return row.lifecycle_block === null ? null : lifecycleText(row.lifecycle_block, action);
 }
 
 function runningReason(row: SessionRow): string | null {
@@ -130,32 +147,36 @@ function destructiveRefusal(
   row: SessionRow | undefined,
 ): DecideOutcome | null {
   if (request.fingerprint === null || !FINGERPRINT.test(request.fingerprint)) {
-    return refusedOutcome(request, NO_STAMP);
+    return refusedOutcome(request, 'no_fingerprint', NO_STAMP);
   }
   if (row === undefined) {
     return request.action === 'harvest'
-      ? refusedOutcome(request, GONE)
-      : refusedOutcome(request, GONE, `${request.id}: ${GONE}`);
+      ? refusedOutcome(request, 'gone', GONE)
+      : refusedOutcome(request, 'gone', GONE, `${request.id}: ${GONE}`);
   }
   const lifecycle = lifecycleReason(row, request.action);
-  if (lifecycle !== null) return refusedOutcome(request, lifecycle);
+  if (lifecycle !== null) return refusedOutcome(request, 'lifecycle_blocked', lifecycle);
   if (request.mtime !== row.mtime) {
     return request.action === 'harvest'
-      ? refusedOutcome(request, CHANGED)
-      : refusedOutcome(request, CHANGED, `${row.label}: ${CHANGED}`);
+      ? refusedOutcome(request, 'changed', CHANGED)
+      : refusedOutcome(request, 'changed', CHANGED, `${row.label}: ${CHANGED}`);
   }
   const running = runningReason(row);
-  return running === null ? null : refusedOutcome(request, running);
+  if (running === null) return null;
+  return refusedOutcome(request, row.running === true ? 'running' : 'presence_unknown', running);
 }
 
 function untilRefusal(request: DecideRequest, nowMs: number): DecideOutcome | null {
   const until = request.until ?? '';
   const parsed = Date.parse(until);
   if (Number.isNaN(parsed)) {
-    return refusedOutcome(request, `--until is not an ISO 8601 time: '${until}'`);
+    return refusedOutcome(request, 'until_invalid', `--until is not an ISO 8601 time: '${until}'`);
   }
-  if (!HAS_OFFSET.test(until)) return refusedOutcome(request, '--until needs a timezone offset');
-  if (parsed <= nowMs) return refusedOutcome(request, 'snooze time must be in the future');
+  if (!HAS_OFFSET.test(until)) {
+    return refusedOutcome(request, 'until_naive', '--until needs a timezone offset');
+  }
+  if (parsed <= nowMs)
+    return refusedOutcome(request, 'until_past', 'snooze time must be in the future');
   return null;
 }
 
@@ -190,7 +211,11 @@ function decideInMemory(
   if (refused !== null) return { outcome: refused, rows };
   if (row === undefined) {
     return {
-      outcome: outcome(request, { status: 'failed', message: `${request.id}: ${GONE}` }),
+      outcome: outcome(request, {
+        status: 'failed',
+        code: 'gone',
+        message: `${request.id}: ${GONE}`,
+      }),
       rows,
     };
   }
@@ -216,6 +241,15 @@ export function createMemoryApi(seed: ListResponse, options: MemoryApiOptions = 
   const harvestDelayMs = options.harvestDelayMs ?? 1_500;
   const cache = options.cache ?? true;
   let current: readonly SessionRow[] = [...seed.sessions];
+  let pendingHarvests = 0;
+  const initialSetup = options.setup ?? 'current';
+  const requirements = { minimum: '0.2.0', latest: '0.3.0', uv_available: true, can_install: true };
+  const installedVersion = { too_old: '0.1.0', outdated: '0.2.0', current: '0.3.0' } as const;
+  let setup: SetupStatus =
+    initialSetup === 'missing'
+      ? { ...requirements, state: 'missing', installed: null }
+      : { ...requirements, state: initialSetup, installed: installedVersion[initialSetup] };
+  let prefs: SetupPrefs = { onboarded: options.onboarded ?? true, prompt_updates: true };
   let closeHandler: ((finishInMs: number | null) => void) | null = null;
 
   const after = <T>(ms: number, produce: () => T): Promise<T> =>
@@ -233,6 +267,8 @@ export function createMemoryApi(seed: ListResponse, options: MemoryApiOptions = 
     ...seed,
     generated_at: generatedAt,
     registry: FAKE_REGISTRY,
+    agents: [...FAKE_AGENTS],
+    home: fakeHome(sessions, pendingHarvests, seed.roundup.stale),
     sessions: sessions as SessionRow[],
   });
 
@@ -286,12 +322,73 @@ export function createMemoryApi(seed: ListResponse, options: MemoryApiOptions = 
       return after(request.action === 'harvest' ? harvestDelayMs : latencyMs, () => {
         const result = decideInMemory(current, request, Date.now());
         current = result.rows;
+        if (request.action === 'harvest' && result.outcome.status === 'ok') pendingHarvests += 1;
         return result.outcome;
       });
     },
     resume: (id) =>
       after(latencyMs, () => ({ command: `rl resume ${id}`, launched: false, via: 'iterm2' })),
+    previewHandoff: (request) =>
+      after(latencyMs, (): HandoffResponse => {
+        const known = current.some((row) => row.project_key === request.project_key);
+        const agent = FAKE_AGENTS.find((entry) => entry.source === request.agent);
+        const name = agent?.agent ?? request.agent;
+        const document = {
+          version: 1,
+          kind: 'handoff',
+          purpose: 'triage',
+          source: request.agent,
+          agent: name,
+          project_key: request.project_key,
+        } as const;
+        const code: HandoffCode | null = !known
+          ? 'nothing_to_triage'
+          : agent?.installed !== true
+            ? 'agent_not_installed'
+            : null;
+        return code === null
+          ? {
+              ...document,
+              status: 'ok',
+              code: null,
+              reason: null,
+              cwd: request.project_key,
+              argv: [name, 'triage prompt'],
+            }
+          : {
+              ...document,
+              status: 'refused',
+              code,
+              reason: `handoff refused: ${code}`,
+              cwd: null,
+              argv: null,
+            };
+      }),
+    launchHandoff: (request) =>
+      after(latencyMs, () => ({
+        command: `rl handoff triage --project=${request.project_key} --agent=${request.agent}`,
+        launched: false,
+        via: 'iterm2' as const,
+      })),
     appInfo: () => after(latencyMs, () => APP_INFO),
+    setupStatus: () => after(latencyMs, () => setup),
+    installRingleader: () =>
+      after(harvestDelayMs, () => {
+        setup = { ...setup, state: 'current', installed: setup.latest };
+        return setup;
+      }),
+    installUv: () =>
+      after(harvestDelayMs, () => {
+        setup = { ...setup, uv_available: true };
+        return setup;
+      }),
+    setupPrefs: () => after(latencyMs, () => prefs),
+    installPresence: () => after(harvestDelayMs, () => undefined),
+    installAgentExtras: () => after(harvestDelayMs, () => undefined),
+    saveSetupPrefs: (next) =>
+      after(latencyMs, () => {
+        prefs = next;
+      }),
     setPending: (count) =>
       after(latencyMs, () => {
         console.debug(`[fake] set_pending ${count}`);

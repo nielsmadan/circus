@@ -44,10 +44,9 @@ describe('CommandPalette', () => {
     const archive = within(dialog).getByRole('option', { name: /Archive without harvesting/ });
     expect(archive).toHaveTextContent('Archive without harvestingInbox⇧E');
     expect(optionNames()).toEqual([
-      'Go to Enrich',
-      'Go to Triage',
       'Go to Inbox',
-      'Go to Harvest',
+      'Go to Archive',
+      'Go to Harvests',
       ...inboxListContext.actionIds.map((id) => inboxListContext.actions[id].displayName),
     ]);
     expect(screen.getByRole('textbox', { name: 'Search commands' })).toHaveFocus();
@@ -56,23 +55,27 @@ describe('CommandPalette', () => {
   it('ranks the best match first', async () => {
     await openPalette();
     await userEvent.keyboard('arch');
-    expect(optionNames()[0]).toBe('Archive without harvesting');
+    expect(optionNames()[0]).toBe('Go to Archive');
     expect(screen.getAllByRole('option')[0]).toHaveAttribute('aria-selected', 'true');
   });
 
   it('runs the highlighted command with ArrowDown and Enter, then closes', async () => {
     await openPalette();
     await userEvent.keyboard('archive');
-    expect(optionNames()).toEqual(['Archive without harvesting', 'Harvest, then archive']);
+    expect(optionNames()).toEqual([
+      'Go to Archive',
+      'Archive without harvesting',
+      'Harvest, then archive',
+    ]);
     await userEvent.keyboard('{ArrowDown}{Enter}');
-    expect(inboxHandler.mock.calls).toEqual([['harvestArchive']]);
+    expect(inboxHandler.mock.calls).toEqual([['archive']]);
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('wraps the highlight upward from the first item', async () => {
     await openPalette();
     await userEvent.keyboard('archive{ArrowUp}');
-    expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getAllByRole('option')[2]).toHaveAttribute('aria-selected', 'true');
   });
 
   it('runs a clicked command', async () => {

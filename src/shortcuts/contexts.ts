@@ -2,6 +2,7 @@ import {
   createRegistry,
   defineContext,
   memoryStore,
+  type RegistrySnapshot,
   type ShortcutContext,
   type ShortcutRegistry,
 } from '@shortcutkit/core';
@@ -10,10 +11,9 @@ export const appContext = defineContext({
   id: 'app',
   displayName: 'App',
   actions: {
-    goEnrich: { displayName: 'Go to Enrich', defaults: 'mod+1' },
-    goTriage: { displayName: 'Go to Triage', defaults: 'mod+2' },
-    goInbox: { displayName: 'Go to Inbox', defaults: 'mod+3' },
-    goHarvest: { displayName: 'Go to Harvest', defaults: 'mod+4' },
+    goInbox: { displayName: 'Go to Inbox', defaults: 'mod+1' },
+    goArchive: { displayName: 'Go to Archive', defaults: 'mod+2' },
+    goHarvests: { displayName: 'Go to Harvests', defaults: 'mod+3' },
     openPalette: { displayName: 'Command palette', defaults: 'mod+k' },
   },
 });
@@ -35,7 +35,14 @@ export const inboxListContext = defineContext({
     keep: { displayName: 'Keep long-term', defaults: 's', allowsKeyRepeat: false },
     keepGoing: { displayName: 'Keep going (mark reviewed)', defaults: 'r', allowsKeyRepeat: false },
     resume: { displayName: 'Resume in terminal', defaults: ['o', 'enter'], allowsKeyRepeat: false },
+    triageWithAgent: {
+      displayName: 'Triage the project with an agent',
+      defaults: 't',
+      allowsKeyRepeat: false,
+    },
     undo: { displayName: 'Undo', defaults: 'z', allowsKeyRepeat: false },
+    mark: { displayName: 'Mark or unmark', defaults: 'x' },
+    markAll: { displayName: 'Mark or unmark all', defaults: 'shift+8', allowsKeyRepeat: false },
     search: { displayName: 'Search', defaults: 'slash' },
     back: { displayName: 'Back', defaults: 'escape' },
     nextSplit: { displayName: 'Next split', defaults: 'tab' },
@@ -53,6 +60,22 @@ export const snoozeDialogContext = defineContext({
   },
 });
 
+export const confirmDialogContext = defineContext({
+  id: 'confirm.dialog',
+  displayName: 'Confirm',
+  actions: {
+    close: { displayName: 'Cancel', defaults: 'escape' },
+  },
+});
+
+export const agentPickerContext = defineContext({
+  id: 'agent.picker',
+  displayName: 'Choose an agent',
+  actions: {
+    close: { displayName: 'Close', defaults: 'escape' },
+  },
+});
+
 export const paletteContext = defineContext({
   id: 'palette',
   displayName: 'Palette',
@@ -63,10 +86,20 @@ export const paletteContext = defineContext({
 
 export type InboxListAction = (typeof inboxListContext.actionIds)[number];
 
+export const MODAL_CONTEXT_IDS: ReadonlySet<string> = new Set(
+  [snoozeDialogContext, agentPickerContext, confirmDialogContext].map((context) => context.id),
+);
+
+export function isModalOpen(snapshot: RegistrySnapshot): boolean {
+  return snapshot.activations.some(({ contextId }) => MODAL_CONTEXT_IDS.has(contextId));
+}
+
 export const ALL_CONTEXTS: readonly ShortcutContext[] = [
   appContext,
   inboxListContext,
   snoozeDialogContext,
+  agentPickerContext,
+  confirmDialogContext,
   paletteContext,
 ];
 

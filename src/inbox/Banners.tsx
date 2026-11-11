@@ -1,22 +1,27 @@
 import { memo, type ReactElement, type ReactNode } from 'react';
 import type { ListResponse } from '../api/types';
+import { KeepFocusButton } from './KeepFocusButton';
+import { PRESENCE_TEXT } from './messages';
 
 export interface BannersProps {
   readonly decisionsBlocked: string | null;
   readonly list: ListResponse | null;
-  readonly roundupDismissed: boolean;
-  readonly onDismissRoundup: () => void;
-  readonly loadErrorMessage: string | null;
+  readonly installingPresence: boolean;
+  readonly onInstallPresence: () => void;
+  readonly loadError: string | null;
+  readonly onRetry: () => void;
 }
 
 function Banner({
   tone,
   children,
-  onDismiss,
+  detail = null,
+  action = null,
 }: {
   readonly tone: 'warning' | 'error';
   readonly children: ReactNode;
-  readonly onDismiss?: () => void;
+  readonly detail?: string | null;
+  readonly action?: ReactNode;
 }): ReactElement {
   const toneClass =
     tone === 'error'
@@ -27,49 +32,63 @@ function Banner({
       role={tone === 'error' ? 'alert' : 'note'}
       className={`flex items-start gap-2 border-b px-3 py-2 text-sm ${toneClass}`}
     >
-      <p className="flex-1">{children}</p>
-      {onDismiss && (
-        <button
-          type="button"
-          tabIndex={-1}
-          aria-label="Dismiss"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={onDismiss}
-          className="opacity-60 hover:opacity-100"
-        >
-          ×
-        </button>
-      )}
+      <div className="flex-1">
+        <p>{children}</p>
+        {detail !== null && (
+          <details className="mt-0.5 text-xs opacity-70">
+            <summary className="cursor-default">Details</summary>
+            <p className="whitespace-pre-wrap">{detail}</p>
+          </details>
+        )}
+      </div>
+      {action}
     </div>
   );
 }
 
-export function roundupText(roundup: ListResponse['roundup']): string {
-  const ran =
-    roundup.age_human === null ? 'Roundup has never run' : `Roundup last ran ${roundup.age_human}`;
-  return `${ran} — run it with \`rl roundup\`; the Enrich tab will run it later`;
-}
-
-export function presenceText(problem: string | null): string {
-  const lead =
-    "Can't tell which sessions are running — archive, delete and harvest will be refused.";
-  return problem ? `${lead} ${problem}` : lead;
-}
+const ACTION_CLASS = 'shrink-0 rounded border px-2 py-0.5 text-xs disabled:opacity-50';
 
 export const Banners = memo(function Banners(props: BannersProps): ReactElement {
-  const { decisionsBlocked, list, roundupDismissed, onDismissRoundup, loadErrorMessage } = props;
+  const { decisionsBlocked, list, installingPresence, onInstallPresence, loadError, onRetry } =
+    props;
   return (
     <div>
-      {loadErrorMessage !== null && <Banner tone="error">{loadErrorMessage}</Banner>}
+      {loadError !== null && (
+        <Banner
+          tone="error"
+          detail={loadError}
+          action={
+            <KeepFocusButton
+              onClick={onRetry}
+              className={`${ACTION_CLASS} border-red-400 dark:border-red-700`}
+            >
+              Retry
+            </KeepFocusButton>
+          }
+        >
+          Couldn’t load sessions
+        </Banner>
+      )}
       {decisionsBlocked !== null && decisionsBlocked !== 'Loading…' && (
         <Banner tone="warning">{decisionsBlocked}</Banner>
       )}
       {list?.presence.state === 'unknown' && (
-        <Banner tone="warning">{presenceText(list.presence.problem)}</Banner>
-      )}
-      {list?.roundup.stale === true && !roundupDismissed && (
-        <Banner tone="warning" onDismiss={onDismissRoundup}>
-          {roundupText(list.roundup)}
+        <Banner
+          tone="warning"
+          detail={list.presence.problem}
+          action={
+            list.presence.code === 'not_installed' && (
+              <KeepFocusButton
+                disabled={installingPresence}
+                onClick={onInstallPresence}
+                className={`${ACTION_CLASS} border-amber-400 dark:border-amber-700`}
+              >
+                {installingPresence ? 'Turning on…' : 'Turn on running-session detection'}
+              </KeepFocusButton>
+            )
+          }
+        >
+          {PRESENCE_TEXT}
         </Banner>
       )}
     </div>

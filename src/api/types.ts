@@ -3,6 +3,22 @@ export const TAIL_CHARS = 50_000;
 
 export type DecisionAction = 'harvest' | 'archive' | 'delete' | 'snooze' | 'keep' | 'keep_going';
 export type OutcomeStatus = 'ok' | 'refused' | 'empty' | 'failed';
+export type OutcomeCode =
+  | 'changed'
+  | 'no_fingerprint'
+  | 'gone'
+  | 'transcript_missing'
+  | 'running'
+  | 'presence_unknown'
+  | 'lifecycle_blocked'
+  | 'until_invalid'
+  | 'until_naive'
+  | 'until_past'
+  | 'no_harvest_model'
+  | 'harvest_failed'
+  | 'failed'
+  | 'other';
+export type PresenceCode = 'not_installed' | 'failed';
 export type Badge =
   'filtered' | 'snoozed' | 'kept' | 'finishing' | 'harvested' | 'abandoned' | 'drifted';
 
@@ -43,13 +59,66 @@ export interface SessionRow {
   badges: Badge[];
 }
 
+export type NextStepKind = 'roundup' | 'woke' | 'recent' | 'publish' | 'project' | 'resume';
+
+interface NextStepFlags {
+  deletes: boolean;
+  costs_model: boolean;
+}
+
+export type NextStep = NextStepFlags &
+  (
+    | { kind: 'roundup'; count: null; project_key: null; id: null }
+    | { kind: 'woke' | 'recent' | 'publish'; count: number; project_key: null; id: null }
+    | { kind: 'project'; count: number; project_key: string; id: null }
+    | { kind: 'resume'; count: null; project_key: null; id: string }
+  );
+
+export interface HomeProject {
+  key: string;
+  label: string;
+  pending: number;
+  unclassified: number;
+  oldest_mtime: string;
+  newest_mtime: string;
+}
+
+export interface HomeCounts {
+  triage_total: number;
+  live: number;
+  unclassified: number;
+  blocked: number;
+  stale: number;
+  kept: number;
+  projects: number;
+  spread_projects: number;
+}
+
+export interface Home {
+  counts: HomeCounts;
+  pending_harvests: number;
+  projects: HomeProject[];
+  waking_soon: string[];
+  in_flight: string[];
+  rows: SessionRow[];
+  next_steps: NextStep[];
+}
+
+export interface AgentInfo {
+  source: string;
+  agent: string;
+  installed: boolean;
+}
+
 export interface ListResponse {
   version: 1;
   kind: 'list';
+  agents?: AgentInfo[];
+  home?: Home;
   generated_at: string;
   registry: string;
   recent_days: number;
-  presence: { state: 'ok' | 'unknown'; problem: string | null };
+  presence: { state: 'ok' | 'unknown'; problem: string | null; code?: PresenceCode | null };
   roundup: {
     last_at: string | null;
     age_human: string | null;
@@ -89,6 +158,7 @@ export interface DecideOutcome {
   action: DecisionAction;
   id: string;
   status: OutcomeStatus;
+  code: OutcomeCode | null;
   reason: string | null;
   message: string;
   wrote: boolean;
@@ -134,7 +204,9 @@ export const SESSION_ROW_KEYS = [
 ] as const satisfies readonly (keyof SessionRow)[];
 
 export const LIST_RESPONSE_KEYS = [
+  'agents',
   'generated_at',
+  'home',
   'kind',
   'presence',
   'recent_days',
@@ -145,8 +217,90 @@ export const LIST_RESPONSE_KEYS = [
   'version',
 ] as const satisfies readonly (keyof ListResponse)[];
 
+export const HOME_KEYS = [
+  'counts',
+  'in_flight',
+  'next_steps',
+  'pending_harvests',
+  'projects',
+  'rows',
+  'waking_soon',
+] as const satisfies readonly (keyof Home)[];
+
+export const HOME_COUNT_KEYS = [
+  'blocked',
+  'kept',
+  'live',
+  'projects',
+  'spread_projects',
+  'stale',
+  'triage_total',
+  'unclassified',
+] as const satisfies readonly (keyof HomeCounts)[];
+
+export const HOME_PROJECT_KEYS = [
+  'key',
+  'label',
+  'newest_mtime',
+  'oldest_mtime',
+  'pending',
+  'unclassified',
+] as const satisfies readonly (keyof HomeProject)[];
+
+export const NEXT_STEP_KEYS = [
+  'costs_model',
+  'count',
+  'deletes',
+  'id',
+  'kind',
+  'project_key',
+] as const satisfies readonly (keyof NextStep)[];
+
+export const AGENT_INFO_KEYS = [
+  'agent',
+  'installed',
+  'source',
+] as const satisfies readonly (keyof AgentInfo)[];
+
+export type HandoffCode = 'nothing_to_triage' | 'agent_not_installed';
+
+interface HandoffDocument {
+  version: 1;
+  kind: 'handoff';
+  purpose: 'triage';
+  source: string;
+  agent: string;
+  project_key: string;
+}
+
+export type HandoffResponse = HandoffDocument &
+  (
+    | { status: 'ok'; code: null; reason: null; cwd: string; argv: string[] }
+    | { status: 'refused'; code: HandoffCode; reason: string; cwd: null; argv: null }
+  );
+
+export const HANDOFF_RESPONSE_KEYS = [
+  'agent',
+  'argv',
+  'code',
+  'cwd',
+  'kind',
+  'project_key',
+  'purpose',
+  'reason',
+  'source',
+  'status',
+  'version',
+] as const satisfies readonly (keyof HandoffResponse)[];
+
+export interface HandoffRequest {
+  project_key: string;
+  agent: string;
+}
+
 export const DECIDE_OUTCOME_KEYS = [
   'action',
+  'code',
   'id',
   'kind',
   'message',
@@ -201,15 +355,39 @@ export interface DecideRequest {
 
 export type TerminalKind = 'iterm2' | 'custom';
 
-export interface ResumeLaunch {
+export interface TerminalLaunch {
   command: string;
   launched: boolean;
   via: TerminalKind;
 }
 
+export type InstallState = 'missing' | 'too_old' | 'outdated' | 'current';
+
+interface SetupRequirements {
+  minimum: string;
+  latest: string;
+  uv_available: boolean;
+  can_install: boolean;
+}
+
+export type InstalledStatus = SetupRequirements & {
+  state: Exclude<InstallState, 'missing'>;
+  installed: string;
+};
+
+export type SetupStatus =
+  (SetupRequirements & { state: 'missing'; installed: null }) | InstalledStatus;
+
+export interface SetupPrefs {
+  onboarded: boolean;
+  prompt_updates: boolean;
+}
+
+export type RlSource = 'env' | 'settings' | 'installed' | 'login_shell' | 'fallback' | 'missing';
+
 export interface AppInfo {
   rl_command: string[];
-  rl_source: 'env' | 'settings' | 'login_shell' | 'fallback' | 'missing';
+  rl_source: RlSource;
   shell_probe: 'ok' | 'timed_out' | 'failed' | 'skipped';
   environment_label: string | null;
   world_root: string | null;

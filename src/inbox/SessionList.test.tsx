@@ -8,6 +8,7 @@ const rows = Array.from({ length: 100 }, (_, i) => makeRow({ id: `r${i}`, sessio
 const props = (overrides: Partial<SessionListProps>): SessionListProps => ({
   rows,
   selectedId: null,
+  marks: new Set(),
   scrollTop: 0,
   viewport: 0,
   onScroll: () => undefined,

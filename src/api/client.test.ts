@@ -123,6 +123,17 @@ describe('createCircusApi', () => {
     expect(invoke).toHaveBeenLastCalledWith('app_info', {});
   });
 
+  it('previews a hand-off through rl_handoff_preview and launches it through launch_handoff', async () => {
+    const request = { project_key: '/u/work/proj-01', agent: 'claude-code' };
+    const doc = { kind: 'handoff', version: 1, status: 'ok' };
+    const invoke = fakeInvoke(bytes(doc));
+    const api = createCircusApi(invoke, noListen);
+    await expect(api.previewHandoff(request)).resolves.toEqual(doc);
+    expect(invoke).toHaveBeenCalledWith('rl_handoff_preview', { request });
+    await api.launchHandoff(request);
+    expect(invoke).toHaveBeenLastCalledWith('launch_handoff', { request });
+  });
+
   it('invokes the close-flow commands', async () => {
     const invoke = fakeInvoke(null);
     const api = createCircusApi(invoke, noListen);

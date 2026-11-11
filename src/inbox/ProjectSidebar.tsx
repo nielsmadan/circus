@@ -1,5 +1,6 @@
 import { memo, type ReactElement } from 'react';
 import type { ProjectCount } from './derive';
+import { KeepFocusButton } from './KeepFocusButton';
 
 export interface ProjectSidebarProps {
   readonly projects: readonly ProjectCount[];
@@ -18,17 +19,14 @@ interface EntryProps {
 function Entry({ label, count, current, onClick }: EntryProps): ReactElement {
   return (
     <li>
-      <button
-        type="button"
-        tabIndex={-1}
+      <KeepFocusButton
         aria-current={current}
-        onMouseDown={(event) => event.preventDefault()}
         onClick={onClick}
         className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm aria-[current=true]:bg-blue-500/15 aria-[current=true]:font-medium"
       >
         <span className="min-w-0 flex-1 truncate">{label}</span>
         <span className="text-xs tabular-nums opacity-60">{count}</span>
-      </button>
+      </KeepFocusButton>
     </li>
   );
 }
@@ -40,7 +38,7 @@ export const ProjectSidebar = memo(function ProjectSidebar({
   onProject,
 }: ProjectSidebarProps): ReactElement {
   return (
-    <nav aria-label="Projects" className="h-full min-h-0 overflow-y-auto p-2">
+    <nav aria-label="Projects">
       <ul className="flex flex-col gap-px">
         <Entry
           label="All projects"

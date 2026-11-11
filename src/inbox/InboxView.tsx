@@ -8,24 +8,42 @@ import {
   type ReactElement,
 } from 'react';
 import type { CircusApi } from '../api/client';
-import { toCircusError, type DecisionAction, type SessionRow } from '../api/types';
-import { inboxListContext, type InboxListAction } from '../shortcuts/contexts';
-import { useShortcutContext } from '@shortcutkit/react';
+import { toCircusError, type DecisionAction, type NextStep, type SessionRow } from '../api/types';
+import { AgentPicker } from './AgentPicker';
+import { ConfirmDialog } from './ConfirmDialog';
+import { inboxListContext, isModalOpen, type InboxListAction } from '../shortcuts/contexts';
+import { useRegistrySnapshot, useShortcutContext } from '@shortcutkit/react';
 import { SnoozeDialog } from '../snooze/SnoozeDialog';
 import { Banners } from './Banners';
 import { Conversation } from './Conversation';
 import {
-  filterByProject,
   indexRows,
+  narrowRows,
   nextSelection,
   positions,
   projectCounts,
-  searchRows,
   splitCounts,
   splitRows,
+  filterByProject,
   SPLITS,
+  type ProjectCount,
   type Split,
 } from './derive';
+import { InFlight, WakingSoon } from './HomeLists';
+import {
+  blockedToast,
+  bulkConfirmText,
+  errorDetail,
+  isConfirmedAction,
+  launchedToast,
+  oneProjectToast,
+  oneResumeToast,
+  quote,
+  resumeFailedToast,
+  sessions,
+  type ConfirmedAction,
+} from './messages';
+import { NextSteps, type StepContext } from './NextSteps';
 import { clearSelect, hasSelectMark, markPaint, markSelect } from './perfMarks';
 import { ProjectSidebar } from './ProjectSidebar';
 import { ReadingPane } from './ReadingPane';
@@ -35,17 +53,27 @@ import { SessionList } from './SessionList';
 import { SplitTabs } from './SplitTabs';
 import { StatusBar } from './StatusBar';
 import type { InboxController } from './useInbox';
+import { useMarks } from './useMarks';
+import { usePresenceInstall } from './usePresenceInstall';
 import { useTails } from './useTails';
+import { actionTargets, triageChoice } from './targets';
+import { useTriageHandoff } from './useTriageHandoff';
 
 export interface InboxViewProps {
   readonly controller: InboxController;
   readonly api: CircusApi;
   readonly visible: boolean;
+  readonly onOpenHarvests: () => void;
 }
 
 interface View {
   readonly selectedId: string | null;
   readonly scrollTop: number;
+}
+
+interface PendingConfirm {
+  readonly action: ConfirmedAction;
+  readonly rows: readonly SessionRow[];
 }
 
 const NO_ROWS: readonly SessionRow[] = Object.freeze([]);
@@ -56,6 +84,7 @@ const DECISION_FOR: Readonly<Partial<Record<InboxListAction, DecisionAction>>> =
   harvestArchive: 'harvest',
   archive: 'archive',
   delete: 'delete',
+  snooze: 'snooze',
   keep: 'keep',
   keepGoing: 'keep_going',
 };
@@ -65,9 +94,14 @@ function emptyText(
   recentDays: number,
   query: string,
   projectFiltered: boolean,
+  following: ProjectCount | null,
 ): string {
   if (query.trim() !== '') return `No sessions match “${query}”`;
-  if (projectFiltered) return 'No sessions in this project — Esc shows all projects';
+  if (projectFiltered) {
+    return following === null
+      ? 'This project is done — all caught up. Esc shows all projects'
+      : `This project is done. Next: ${following.label} (${following.pending} waiting) — Enter`;
+  }
   switch (split) {
     case 'recent':
       return `Nothing from the last ${recentDays} days is waiting`;
@@ -101,25 +135,77 @@ function nextSplit(split: Split, delta: number): Split {
   return SPLITS[(at + delta + SPLITS.length) % SPLITS.length] ?? split;
 }
 
-export function InboxView({ controller, api, visible }: InboxViewProps): ReactElement {
+function rowsById(list: InboxController['list']): ReadonlyMap<string, SessionRow> {
+  const all = [...(list?.sessions ?? NO_ROWS), ...(list?.home?.rows ?? NO_ROWS)];
+  return new Map(all.map((row) => [row.id, row]));
+}
+
+function pick(ids: readonly string[], byId: ReadonlyMap<string, SessionRow>): SessionRow[] {
+  return ids.flatMap((id) => {
+    const row = byId.get(id);
+    return row === undefined ? [] : [row];
+  });
+}
+
+export function InboxView({
+  controller,
+  api,
+  visible,
+  onOpenHarvests,
+}: InboxViewProps): ReactElement {
   const [split, setSplit] = useState<Split>('recent');
   const [projectKey, setProjectKey] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [view, setView] = useState<View>(INITIAL_VIEW);
   const [viewport, setViewport] = useState(0);
-  const [snoozeTarget, setSnoozeTarget] = useState<SessionRow | null>(null);
-  const [roundupDismissed, setRoundupDismissed] = useState(false);
+  const [snoozeTargets, setSnoozeTargets] = useState<readonly SessionRow[] | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
 
-  const { list, rows } = controller;
+  const { list, rows, notify, rescan } = controller;
   const index = useMemo(() => indexRows(list?.sessions ?? NO_ROWS), [list]);
   const inSplit = useMemo(() => splitRows(rows, split, index), [rows, split, index]);
   const shown = useMemo(
-    () => searchRows(filterByProject(inSplit, projectKey), query, index),
+    () => narrowRows(inSplit, projectKey, query, index),
     [inSplit, projectKey, query, index],
   );
   const shownPositions = useMemo(() => positions(shown), [shown]);
+  const marks = useMarks(shown, shownPositions);
+  const { markedRows } = marks;
   const counts = useMemo(() => splitCounts(filterByProject(rows, projectKey)), [rows, projectKey]);
   const projects = useMemo(() => projectCounts(inSplit, index), [inSplit, index]);
+  const following = useMemo(
+    () => (shown.length === 0 ? (projects.find((p) => p.key !== projectKey) ?? null) : null),
+    [shown, projects, projectKey],
+  );
+  const byId = useMemo(() => rowsById(list), [list]);
+  const home = list?.home ?? null;
+  const inFlight = useMemo(() => pick(home?.in_flight ?? [], byId), [home, byId]);
+  const wakingSoon = useMemo(() => pick(home?.waking_soon ?? [], byId), [home, byId]);
+  const allProjects = useMemo(
+    () => new Map(projectCounts(rows, index).map((project) => [project.key, project])),
+    [rows, index],
+  );
+  const stepContext = useMemo(
+    (): StepContext | null =>
+      list === null || home === null
+        ? null
+        : {
+            home,
+            roundup: list.roundup,
+            recentDays: list.recent_days,
+            now: list.generated_at,
+            rowFor: (id) => byId.get(id) ?? null,
+            projectFor: (key) => allProjects.get(key) ?? null,
+          },
+    [list, home, byId, allProjects],
+  );
+  const installedAgents = useMemo(
+    () => (list?.agents ?? []).filter((agent) => agent.installed),
+    [list],
+  );
+  const presence = usePresenceInstall(api, notify, rescan);
+  const handoff = useTriageHandoff(api, notify, installedAgents);
+  const modalOpen = isModalOpen(useRegistrySnapshot());
 
   const [prevShown, setPrevShown] = useState<readonly SessionRow[]>(NO_ROWS);
   if (shown !== prevShown) {
@@ -164,24 +250,24 @@ export function InboxView({ controller, api, visible }: InboxViewProps): ReactEl
     viewportRef.current = height;
     setViewport(height);
   }, []);
+  const clearMarks = marks.clear;
   const changeSplit = useCallback(
     (next: Split) => {
       if (next === split) return;
       setSplit(next);
       setView(INITIAL_VIEW);
+      clearMarks();
       setProjectKey((key) =>
         key !== null && filterByProject(splitRows(rows, next, index), key).length === 0
           ? null
           : key,
       );
     },
-    [split, rows, index],
+    [split, rows, index, clearMarks],
   );
   const inCurrentView = (row: SessionRow): boolean =>
-    searchRows(filterByProject(splitRows([row], split, index), projectKey), query, index).length >
-    0;
+    narrowRows(splitRows([row], split, index), projectKey, query, index).length > 0;
   const onProject = useCallback((key: string | null) => setProjectKey(key), []);
-  const onDismissRoundup = useCallback(() => setRoundupDismissed(true), []);
   const onSearchDone = useCallback(() => listRef.current?.focus(), []);
 
   const selectedId = view.selectedId;
@@ -223,24 +309,50 @@ export function InboxView({ controller, api, visible }: InboxViewProps): ReactEl
 
   const resume = (row: SessionRow) => {
     api.resume(row.id).then(
-      (launch) =>
-        controller.notify({
-          tone: 'info',
-          text: launch.launched
-            ? `Opened in ${launch.via === 'iterm2' ? 'iTerm2' : 'the terminal'}`
-            : `Dry run: ${launch.command}`,
-          undo: false,
-          detail: null,
-        }),
-      (error: unknown) =>
-        controller.notify({
-          tone: 'error',
-          text: `Resume failed: ${toCircusError(error).message}`,
-          undo: false,
-          detail: null,
-        }),
+      (launch) => notify(launchedToast(launch, quote(row.label))),
+      (error: unknown) => notify(resumeFailedToast(row.label, errorDetail(toCircusError(error)))),
     );
   };
+
+  const resumeRef = useRef(resume);
+  useLayoutEffect(() => {
+    resumeRef.current = resume;
+  });
+  const onResumeRow = useCallback((row: SessionRow) => resumeRef.current(row), []);
+
+  const goToProject = (key: string) => {
+    changeSplit('all');
+    setProjectKey(key);
+    setView(INITIAL_VIEW);
+  };
+
+  const onStep = (step: NextStep) => {
+    switch (step.kind) {
+      case 'woke':
+      case 'recent':
+        setProjectKey(null);
+        changeSplit(step.kind);
+        return;
+      case 'project':
+        goToProject(step.project_key);
+        return;
+      case 'publish':
+        onOpenHarvests();
+        return;
+      case 'resume': {
+        const row = byId.get(step.id);
+        if (row !== undefined) resume(row);
+        return;
+      }
+      case 'roundup':
+        return;
+    }
+  };
+  const onStepRef = useRef(onStep);
+  useLayoutEffect(() => {
+    onStepRef.current = onStep;
+  });
+  const onStepStable = useCallback((step: NextStep) => onStepRef.current(step), []);
 
   const back = () => {
     const input = searchRef.current;
@@ -254,6 +366,42 @@ export function InboxView({ controller, api, visible }: InboxViewProps): ReactEl
     else if (projectKey !== null) setProjectKey(null);
   };
 
+  const unlessBlocked = (open: () => void) => {
+    const blocked = controller.decisionsBlocked;
+    if (blocked === null) open();
+    else notify(blockedToast(blocked));
+  };
+
+  const decideOn = (decision: DecisionAction, targets: readonly SessionRow[]) => {
+    if (decision === 'snooze') {
+      unlessBlocked(() => setSnoozeTargets(targets));
+      return;
+    }
+    if (targets.length > 1 && isConfirmedAction(decision)) {
+      unlessBlocked(() => setPendingConfirm({ action: decision, rows: targets }));
+      return;
+    }
+    if (controller.decideMany(decision, targets)) marks.clear();
+  };
+
+  const resumeTargets = (targets: readonly SessionRow[]) => {
+    const [only, ...others] = targets;
+    if (only === undefined) {
+      if (following !== null && projectKey !== null) goToProject(following.key);
+      return;
+    }
+    if (others.length > 0) notify(oneResumeToast());
+    else resume(only);
+  };
+
+  const triageTargets = (targets: readonly SessionRow[]) => {
+    const label =
+      projectKey === null ? null : (projects.find((p) => p.key === projectKey)?.label ?? null);
+    const choice = triageChoice(projectKey, label, targets);
+    if (choice.kind === 'several') notify(oneProjectToast());
+    else if (choice.kind === 'target') handoff.triage(choice.target);
+  };
+
   const onAction = (action: InboxListAction) => {
     switch (action) {
       case 'next':
@@ -263,8 +411,8 @@ export function InboxView({ controller, api, visible }: InboxViewProps): ReactEl
         move(-1);
         return;
       case 'undo': {
-        const undone = controller.undo();
-        if (undone !== null && inCurrentView(undone.row)) onSelect(undone.row.id);
+        const newest = controller.undo().at(-1);
+        if (newest !== undefined && inCurrentView(newest.row)) onSelect(newest.row.id);
         return;
       }
       case 'search':
@@ -282,46 +430,46 @@ export function InboxView({ controller, api, visible }: InboxViewProps): ReactEl
       case 'rescan':
         controller.rescan();
         return;
+      case 'markAll':
+        marks.toggleAll(shownRef.current);
+        return;
+      case 'mark': {
+        const row = selectedNow();
+        if (row !== null) marks.toggle(row.id);
+        return;
+      }
       default:
         break;
     }
-    const row = selectedNow();
-    if (row === null) return;
-    if (action === 'resume') {
-      resume(row);
+    const targets = actionTargets(markedRows, selectedNow());
+    if (action === 'triageWithAgent') {
+      triageTargets(targets);
       return;
     }
-    if (action === 'snooze') {
-      if (controller.decisionsBlocked === null) setSnoozeTarget(row);
-      else controller.decide('snooze', row);
+    if (action === 'resume') {
+      resumeTargets(targets);
       return;
     }
     const decision = DECISION_FOR[action];
-    if (decision !== undefined) controller.decide(decision, row);
+    if (decision !== undefined && targets.length > 0) decideOn(decision, targets);
   };
 
   useShortcutContext(inboxListContext, onAction, {
-    enabled: visible && snoozeTarget === null && !controller.closing,
+    enabled: visible && !modalOpen && !controller.closing,
   });
 
   const loadError = controller.loadError;
-  const fatal =
-    loadError !== null && (loadError.kind === 'rl_not_found' || loadError.kind === 'rl_too_old');
-
-  if (fatal && list === null) {
-    return (
-      <div role="alert" className="flex flex-1 items-center justify-center p-8">
-        <p className="max-w-xl text-center text-sm whitespace-pre-wrap">{loadError.message}</p>
-      </div>
-    );
-  }
-
   const envLabel = controller.info?.environment_label ?? null;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-3 border-b border-neutral-200 px-3 py-2 dark:border-neutral-800">
         <SplitTabs split={split} counts={counts} onSplit={changeSplit} />
         <SearchBox query={query} onQuery={setQuery} onDone={onSearchDone} inputRef={searchRef} />
+        {markedRows.length > 0 && (
+          <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-xs">
+            {markedRows.length} marked
+          </span>
+        )}
         {controller.listStale && (
           <span className="rounded-full bg-neutral-500/15 px-2 py-0.5 text-xs">
             Cached · refreshing…
@@ -337,32 +485,23 @@ export function InboxView({ controller, api, visible }: InboxViewProps): ReactEl
       <Banners
         decisionsBlocked={controller.decisionsBlocked}
         list={list}
-        roundupDismissed={roundupDismissed}
-        onDismissRoundup={onDismissRoundup}
-        loadErrorMessage={fatal ? loadError.message : null}
+        installingPresence={presence.installing}
+        onInstallPresence={presence.install}
+        loadError={loadError === null ? null : loadError.message}
+        onRetry={controller.refresh}
       />
-      {loadError !== null && !fatal && (
-        <div
-          role="alert"
-          className="flex items-center gap-3 border-b border-red-300 bg-red-50 px-3 py-2 text-sm dark:border-red-800 dark:bg-red-950"
-        >
-          <p className="flex-1">Couldn’t load sessions: {loadError.message}</p>
-          <button
-            type="button"
-            onClick={() => controller.refresh()}
-            className="rounded border px-2 py-0.5"
-          >
-            Retry
-          </button>
-        </div>
-      )}
+      {stepContext !== null && <NextSteps context={stepContext} onStep={onStepStable} />}
       <div className="grid min-h-0 flex-1 grid-cols-[13rem_minmax(0,1fr)_minmax(0,1.1fr)]">
-        <ProjectSidebar
-          projects={projects}
-          total={inSplit.length}
-          projectKey={projectKey}
-          onProject={onProject}
-        />
+        <div className="h-full min-h-0 overflow-y-auto p-2">
+          <ProjectSidebar
+            projects={projects}
+            total={inSplit.length}
+            projectKey={projectKey}
+            onProject={onProject}
+          />
+          <InFlight rows={inFlight} onResume={onResumeRow} />
+          <WakingSoon rows={wakingSoon} now={list?.generated_at ?? ''} />
+        </div>
         <div className="min-h-0 border-x border-neutral-200 dark:border-neutral-800">
           {list === null ? (
             <p className="p-6 text-center text-sm opacity-60">
@@ -372,28 +511,52 @@ export function InboxView({ controller, api, visible }: InboxViewProps): ReactEl
             <SessionList
               rows={shown}
               selectedId={view.selectedId}
+              marks={marks.marks}
               scrollTop={view.scrollTop}
               viewport={viewport}
               onScroll={onScroll}
               onResize={onResize}
               onSelect={onSelect}
               listRef={listRef}
-              empty={emptyText(split, list.recent_days, query, projectKey !== null)}
+              empty={emptyText(split, list.recent_days, query, projectKey !== null, following)}
             />
           )}
         </div>
         <ReadingPane row={selectedRow} conversation={conversation} />
       </div>
       <StatusBar entries={controller.entries} scanning={controller.scanning} />
-      {snoozeTarget !== null && (
+      {handoff.choice !== null && (
+        <AgentPicker
+          projectLabel={handoff.choice.target.label}
+          agents={installedAgents}
+          preferred={handoff.choice.preferred}
+          onPick={handoff.pick}
+          onClose={handoff.closePicker}
+        />
+      )}
+      {pendingConfirm !== null && (
+        <ConfirmDialog
+          {...bulkConfirmText(pendingConfirm.action, pendingConfirm.rows.length)}
+          onConfirm={() => {
+            setPendingConfirm(null);
+            if (controller.decideMany(pendingConfirm.action, pendingConfirm.rows)) marks.clear();
+          }}
+          onClose={() => setPendingConfirm(null)}
+        />
+      )}
+      {snoozeTargets !== null && (
         <SnoozeDialog
-          sessionLabel={snoozeTarget.label}
+          sessionLabel={
+            snoozeTargets.length === 1
+              ? (snoozeTargets[0]?.label ?? '')
+              : sessions(snoozeTargets.length)
+          }
           now={currentTime}
           onConfirm={(at) => {
-            setSnoozeTarget(null);
-            controller.decide('snooze', snoozeTarget, at.toISOString());
+            setSnoozeTargets(null);
+            if (controller.decideMany('snooze', snoozeTargets, at.toISOString())) marks.clear();
           }}
-          onClose={() => setSnoozeTarget(null)}
+          onClose={() => setSnoozeTargets(null)}
         />
       )}
     </div>

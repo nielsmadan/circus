@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -90,20 +90,29 @@ pub fn parse_shell_probe(stdout: &str) -> ShellProbe {
     }
 }
 
-pub fn fallback_rl(home: &Path, is_executable: &dyn Fn(&Path) -> bool) -> Option<String> {
-    FALLBACK_DIRS
-        .iter()
+pub fn find_in_dirs(
+    dirs: &[&str],
+    home: &Path,
+    name: &str,
+    is_executable: &dyn Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    dirs.iter()
         .map(|dir| match dir.strip_prefix("~/") {
-            Some(rest) => home.join(rest).join("rl"),
-            None => Path::new(dir).join("rl"),
+            Some(rest) => home.join(rest).join(name),
+            None => Path::new(dir).join(name),
         })
         .find(|candidate| is_executable(candidate))
+}
+
+pub fn fallback_rl(home: &Path, is_executable: &dyn Fn(&Path) -> bool) -> Option<String> {
+    find_in_dirs(&FALLBACK_DIRS, home, "rl", is_executable)
         .map(|found| found.to_string_lossy().into_owned())
 }
 
 pub fn resolve_rl(
     env_rl: Option<&str>,
     settings: &Settings,
+    installed: Option<&[String]>,
     login_rl: Option<&str>,
     fallback: Option<&str>,
 ) -> (Vec<String>, RlSource) {
@@ -112,6 +121,9 @@ pub fn resolve_rl(
     }
     if let Some(command) = settings.rl_command.clone().filter(|c| !c.is_empty()) {
         return (command, RlSource::Settings);
+    }
+    if let Some(command) = installed.filter(|c| !c.is_empty()) {
+        return (command.to_vec(), RlSource::Installed);
     }
     if let Some(rl) = login_rl {
         return (vec![rl.to_string()], RlSource::LoginShell);
@@ -175,6 +187,7 @@ pub fn resolve<R: ProcessRunner>(
     runner: &R,
     env: &EnvSnapshot,
     settings: &Settings,
+    installed: Option<&[String]>,
     is_executable: &dyn Fn(&Path) -> bool,
 ) -> Resolved {
     let env_rl_unusable = env.env_label.is_some()
@@ -196,10 +209,16 @@ pub fn resolve<R: ProcessRunner>(
         None => run_probe(runner, env.shell.as_deref()),
     };
     let login_rl = probe.rl.filter(|rl| is_executable(Path::new(rl)));
+    let installed = installed.filter(|command| {
+        command
+            .first()
+            .is_some_and(|rl| is_executable(Path::new(rl)))
+    });
     let fallback = fallback_rl(&env.home, is_executable);
     let (command, source) = resolve_rl(
         env.circus_rl.as_deref(),
         settings,
+        installed,
         login_rl.as_deref(),
         fallback.as_deref(),
     );
@@ -213,7 +232,7 @@ pub fn resolve<R: ProcessRunner>(
 
 pub fn not_found_message(resolved: &Resolved, settings_path: &str) -> String {
     let base = format!(
-        "Could not run `{}`. Set CIRCUS_RL, or set \"rl_command\" (an argv array) in {settings_path}, or put rl on your login shell's PATH.",
+        "ringleader could not be found (tried `{}`). Install it from the setup screen, or set \"rl_command\" in {settings_path}.",
         resolved.command.join(" ")
     );
     match resolved.probe {
@@ -368,7 +387,13 @@ mod tests {
     fn resolve_rl_follows_the_documented_order() {
         let default = Settings::default();
         assert_eq!(
-            resolve_rl(Some("'/w/.venv/bin/rl'"), &default, Some("/u/rl"), None),
+            resolve_rl(
+                Some("'/w/.venv/bin/rl'"),
+                &default,
+                None,
+                Some("/u/rl"),
+                None
+            ),
             (strings(&["/w/.venv/bin/rl"]), RlSource::Env)
         );
         let configured = Settings {
@@ -376,33 +401,83 @@ mod tests {
             terminal_command: None,
         };
         assert_eq!(
-            resolve_rl(None, &configured, Some("/u/rl"), None),
+            resolve_rl(None, &configured, None, Some("/u/rl"), None),
             (strings(&["/opt/rl"]), RlSource::Settings)
         );
         assert_eq!(
-            resolve_rl(None, &default, Some("/u/rl"), Some("/h/rl")),
+            resolve_rl(None, &default, None, Some("/u/rl"), Some("/h/rl")),
             (strings(&["/u/rl"]), RlSource::LoginShell)
         );
         assert_eq!(
-            resolve_rl(None, &default, None, Some("/h/rl")),
+            resolve_rl(None, &default, None, None, Some("/h/rl")),
             (strings(&["/h/rl"]), RlSource::Fallback)
         );
         assert_eq!(
-            resolve_rl(None, &default, None, None),
+            resolve_rl(None, &default, None, None, None),
             (strings(&["rl"]), RlSource::Missing)
         );
         assert_eq!(
-            resolve_rl(Some("'unterminated"), &default, None, Some("/h/rl")),
+            resolve_rl(Some("'unterminated"), &default, None, None, Some("/h/rl")),
             (strings(&["/h/rl"]), RlSource::Fallback)
         );
     }
 
     #[test]
+    fn an_installed_rl_comes_after_settings_and_before_the_login_shell() {
+        let installed = strings(&["/h/.local/bin/rl"]);
+        let configured = Settings {
+            rl_command: Some(strings(&["/opt/rl"])),
+            terminal_command: None,
+        };
+        assert_eq!(
+            resolve_rl(None, &configured, Some(&installed), Some("/u/rl"), None),
+            (strings(&["/opt/rl"]), RlSource::Settings)
+        );
+        assert_eq!(
+            resolve_rl(
+                None,
+                &Settings::default(),
+                Some(&installed),
+                Some("/u/rl"),
+                Some("/h/rl")
+            ),
+            (installed.clone(), RlSource::Installed)
+        );
+    }
+
+    #[test]
+    fn resolve_ignores_an_installed_rl_that_is_gone() {
+        let runner = FakeRunner::new(Err(RunError::Timeout));
+        let installed = strings(&["/h/.local/bin/rl"]);
+        let kept = resolve(
+            &runner,
+            &env(None),
+            &Settings::default(),
+            Some(&installed),
+            &|path| path == Path::new("/h/.local/bin/rl"),
+        );
+        assert_eq!(kept.source, RlSource::Installed);
+        assert_eq!(kept.command, installed);
+        let gone = resolve(
+            &runner,
+            &env(None),
+            &Settings::default(),
+            Some(&installed),
+            &|_| false,
+        );
+        assert_eq!(gone.source, RlSource::Missing);
+    }
+
+    #[test]
     fn resolve_skips_the_probe_when_circus_rl_is_set() {
         let runner = FakeRunner::new(Err(RunError::Timeout));
-        let resolved = resolve(&runner, &env(Some("/w/rl")), &Settings::default(), &|_| {
-            false
-        });
+        let resolved = resolve(
+            &runner,
+            &env(Some("/w/rl")),
+            &Settings::default(),
+            None,
+            &|_| false,
+        );
         assert!(runner.specs.lock().expect("specs").is_empty());
         assert_eq!(resolved.probe, ShellProbeState::Skipped);
         assert_eq!(resolved.command, strings(&["/w/rl"]));
@@ -419,12 +494,18 @@ mod tests {
             rl_command: Some(strings(&["/opt/rl"])),
             terminal_command: None,
         };
-        let resolved = resolve(&runner, &labelled, &settings, &|_| true);
+        let resolved = resolve(&runner, &labelled, &settings, None, &|_| true);
         assert_eq!(resolved.source, RlSource::Missing);
         assert_eq!(resolved.command, strings(&[UNRESOLVED_SANDBOX_RL]));
         assert!(runner.specs.lock().expect("specs").is_empty());
 
-        let unlabelled = resolve(&runner, &env(Some("'unterminated")), &settings, &|_| true);
+        let unlabelled = resolve(
+            &runner,
+            &env(Some("'unterminated")),
+            &settings,
+            None,
+            &|_| true,
+        );
         assert_eq!(unlabelled.source, RlSource::Settings);
     }
 
@@ -437,26 +518,26 @@ mod tests {
             rl_command: Some(strings(&["/opt/rl"])),
             terminal_command: None,
         };
-        let resolved = resolve(&runner, &labelled, &settings, &|_| true);
+        let resolved = resolve(&runner, &labelled, &settings, None, &|_| true);
         assert_eq!(resolved.source, RlSource::Missing);
         assert_eq!(resolved.command, strings(&[UNRESOLVED_SANDBOX_RL]));
         assert_eq!(resolved.probe, ShellProbeState::Skipped);
         assert!(runner.specs.lock().expect("specs").is_empty());
 
         labelled.circus_rl = Some("   ".to_string());
-        let blank = resolve(&runner, &labelled, &settings, &|_| true);
+        let blank = resolve(&runner, &labelled, &settings, None, &|_| true);
         assert_eq!(blank.command, strings(&[UNRESOLVED_SANDBOX_RL]));
     }
 
     #[test]
     fn resolve_reports_a_timed_out_probe() {
         let runner = FakeRunner::new(Err(RunError::Timeout));
-        let resolved = resolve(&runner, &env(None), &Settings::default(), &|_| false);
+        let resolved = resolve(&runner, &env(None), &Settings::default(), None, &|_| false);
         assert_eq!(resolved.probe, ShellProbeState::TimedOut);
         assert_eq!(resolved.source, RlSource::Missing);
         let message = not_found_message(&resolved, "/cfg/settings.json");
         assert!(message.contains("5 s"));
-        assert!(message.contains("CIRCUS_RL"));
+        assert!(message.contains("setup screen"));
         assert!(message.contains("/cfg/settings.json"));
         assert!(message.contains("rl_command"));
     }
@@ -469,7 +550,7 @@ mod tests {
             stdout: stdout.to_vec(),
             stderr: String::new(),
         }));
-        let resolved = resolve(&runner, &env(None), &Settings::default(), &|path| {
+        let resolved = resolve(&runner, &env(None), &Settings::default(), None, &|path| {
             path == Path::new("/u/.local/bin/rl")
         });
         assert_eq!(resolved.probe, ShellProbeState::Ok);
@@ -490,7 +571,7 @@ mod tests {
             stdout: Vec::new(),
             stderr: String::new(),
         }));
-        let resolved = resolve(&runner, &env(None), &Settings::default(), &|_| false);
+        let resolved = resolve(&runner, &env(None), &Settings::default(), None, &|_| false);
         assert_eq!(resolved.probe, ShellProbeState::Failed);
     }
 

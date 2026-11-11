@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::contract::{ResumeLaunch, TerminalKind};
+use crate::contract::{HandoffRequest, TerminalKind, TerminalLaunch};
 use crate::error::{CircusError, ErrorKind};
 use crate::process::{OnDeadline, ProcessOutput, ProcessRunner, ProcessSpec, RunError};
 use crate::rl;
@@ -9,12 +9,21 @@ pub const RESUME_LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
 pub const CUSTOM_LAUNCH_GRACE: Duration = Duration::from_secs(5);
 const OSASCRIPT: &str = "/usr/bin/osascript";
 const COMMAND_PLACEHOLDER: &str = "{command}";
-const NOT_AUTHORIZED: &str = "Circus isn't allowed to control iTerm2. Allow it in System Settings › Privacy & Security › Automation, then resume again.";
-const NO_RESPONSE: &str = "iTerm2 did not respond within 60 s — answer the permission prompt if one is open, then resume again.";
+const NOT_AUTHORIZED: &str = "Circus isn't allowed to control iTerm2. Allow it in System Settings › Privacy & Security › Automation, then try again.";
+const NO_RESPONSE: &str = "iTerm2 did not respond within 60 s — answer the permission prompt if one is open, then try again.";
 
 pub fn resume_command_line(rl_command: &[String], id: &str) -> Result<String, CircusError> {
     shlex::try_join(rl_command.iter().map(String::as_str).chain(["resume", id]))
         .map_err(|error| CircusError::invalid(format!("cannot quote the resume command: {error}")))
+}
+
+pub fn handoff_command_line(
+    rl_command: &[String],
+    req: &HandoffRequest,
+) -> Result<String, CircusError> {
+    let args = rl::handoff_args(req, rl::HandoffMode::Launch)?;
+    shlex::try_join(rl_command.iter().chain(&args).map(String::as_str))
+        .map_err(|error| CircusError::invalid(format!("cannot quote the handoff command: {error}")))
 }
 
 pub fn applescript_string(text: &str) -> String {
@@ -138,14 +147,42 @@ pub fn launch<R: ProcessRunner>(
     id: &str,
     terminal_command: Option<&[String]>,
     dry_run: bool,
-) -> Result<ResumeLaunch, CircusError> {
+) -> Result<TerminalLaunch, CircusError> {
     if !rl::valid_session_id(id) {
         return Err(CircusError::invalid(format!("invalid session id: {id:?}")));
     }
-    let command = resume_command_line(rl_command, id)?;
+    launch_line(
+        runner,
+        resume_command_line(rl_command, id)?,
+        terminal_command,
+        dry_run,
+    )
+}
+
+pub fn launch_handoff<R: ProcessRunner>(
+    runner: &R,
+    rl_command: &[String],
+    req: &HandoffRequest,
+    terminal_command: Option<&[String]>,
+    dry_run: bool,
+) -> Result<TerminalLaunch, CircusError> {
+    launch_line(
+        runner,
+        handoff_command_line(rl_command, req)?,
+        terminal_command,
+        dry_run,
+    )
+}
+
+fn launch_line<R: ProcessRunner>(
+    runner: &R,
+    command: String,
+    terminal_command: Option<&[String]>,
+    dry_run: bool,
+) -> Result<TerminalLaunch, CircusError> {
     let (spec, via) = launch_spec(terminal_command, &command)?;
     if dry_run {
-        return Ok(ResumeLaunch {
+        return Ok(TerminalLaunch {
             command,
             launched: false,
             via,
@@ -153,7 +190,7 @@ pub fn launch<R: ProcessRunner>(
     }
     match classify_launch(runner.run(&spec), via, &spec.program) {
         Some(error) => Err(error),
-        None => Ok(ResumeLaunch {
+        None => Ok(TerminalLaunch {
             command,
             launched: true,
             via,
@@ -211,7 +248,7 @@ mod tests {
         runner: &FakeRunner,
         id: &str,
         dry_run: bool,
-    ) -> Result<ResumeLaunch, CircusError> {
+    ) -> Result<TerminalLaunch, CircusError> {
         launch(runner, &rl_command(), id, None, dry_run)
     }
 
@@ -456,6 +493,46 @@ mod tests {
         assert!(!launched.launched);
         assert_eq!(launched.command, "/w/.venv/bin/rl resume claude-code:abc");
         assert_eq!(runner.spawned(), 0);
+    }
+
+    #[test]
+    fn a_handoff_dry_run_returns_the_quoted_command_without_spawning() {
+        let runner = FakeRunner::exiting(0, "");
+        let req = HandoffRequest {
+            project_key: "/w/my proj".to_string(),
+            agent: "claude-code".to_string(),
+        };
+        let launch = launch_handoff(&runner, &rl_command(), &req, None, true).expect("dry run");
+        assert_eq!(
+            launch.command,
+            "/w/.venv/bin/rl handoff triage '--project=/w/my proj' '--agent=claude-code'"
+        );
+        assert!(!launch.launched);
+        assert_eq!(runner.spawned(), 0);
+    }
+
+    #[test]
+    fn a_failed_handoff_launch_asks_to_try_again() {
+        let req = HandoffRequest {
+            project_key: "/w/proj".to_string(),
+            agent: "codex".to_string(),
+        };
+        let denied =
+            FakeRunner::exiting(1, "Not authorized to send Apple events to iTerm. (-1743)");
+        let error = launch_handoff(&denied, &rl_command(), &req, None, false).expect_err("denied");
+        assert!(
+            error.message.ends_with("then try again."),
+            "{}",
+            error.message
+        );
+        let silent = FakeRunner::returning(Err(RunError::Timeout));
+        let error =
+            launch_handoff(&silent, &rl_command(), &req, None, false).expect_err("times out");
+        assert!(
+            error.message.ends_with("then try again."),
+            "{}",
+            error.message
+        );
     }
 
     #[test]

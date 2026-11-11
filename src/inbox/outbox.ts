@@ -26,6 +26,7 @@ export function laneOf(action: DecisionAction): Lane {
 
 export interface Decision {
   readonly ticket: number;
+  readonly batchId: number;
   readonly action: DecisionAction;
   readonly row: SessionRow;
   readonly until: string | null;
@@ -70,6 +71,14 @@ export type EnqueueResult =
   | { readonly ok: true; readonly decision: Decision }
   | { readonly ok: false; readonly reason: 'closing' | 'duplicate' };
 
+export type EnqueueBatchResult =
+  | {
+      readonly ok: true;
+      readonly decisions: readonly Decision[];
+      readonly duplicates: readonly SessionRow[];
+    }
+  | { readonly ok: false; readonly reason: 'closing' };
+
 function isUnsent(entry: OutboxEntry): boolean {
   return entry.state === 'pending' || entry.state === 'queued';
 }
@@ -94,35 +103,70 @@ export class Outbox {
 
   enqueue(action: DecisionAction, row: SessionRow, until: string | null = null): EnqueueResult {
     if (this.closing) return { ok: false, reason: 'closing' };
-    if (this.entries.some((entry) => entry.decision.row.id === row.id)) {
-      return { ok: false, reason: 'duplicate' };
-    }
-    const decision: Decision = Object.freeze({ ticket: this.nextTicket, action, row, until });
-    this.nextTicket += 1;
-    const delay = UNDO_WINDOW_MS[action];
-    const entry: OutboxEntry = Object.freeze({
-      decision,
-      state: 'pending',
-      sendAt: this.deps.now() + delay,
+    if (this.hasEntryFor(row)) return { ok: false, reason: 'duplicate' };
+    const decision = Object.freeze({
+      ticket: this.nextTicket,
+      batchId: this.nextTicket,
+      action,
+      row,
+      until,
     });
-    this.setEntries([...this.entries, entry]);
-    this.timers.set(
-      decision.ticket,
-      this.deps.setTimer(() => this.due(decision.ticket), delay),
-    );
-    this.notify();
+    this.add([decision]);
     return { ok: true, decision };
   }
 
-  undo(): Decision | null {
+  enqueueBatch(
+    action: DecisionAction,
+    rows: readonly SessionRow[],
+    until: string | null = null,
+  ): EnqueueBatchResult {
+    if (this.closing) return { ok: false, reason: 'closing' };
+    const fresh = rows.filter((row) => !this.hasEntryFor(row));
+    const duplicates = rows.filter((row) => this.hasEntryFor(row));
+    const batchId = this.nextTicket;
+    const decisions = Object.freeze(
+      fresh.map((row, offset) =>
+        Object.freeze({ ticket: batchId + offset, batchId, action, row, until }),
+      ),
+    );
+    this.add(decisions);
+    return { ok: true, decisions, duplicates };
+  }
+
+  undoBatch(): readonly Decision[] {
     // entries stay in ticket order, so the last unsent one is the newest
     const newest = this.entries.findLast(isUnsent);
-    if (newest === undefined) return null;
-    this.clearTimerFor(newest.decision.ticket);
-    this.setEntries(this.entries.filter((entry) => entry !== newest));
+    if (newest === undefined) return [];
+    const { batchId } = newest.decision;
+    const removed = this.entries.filter(
+      (entry) => isUnsent(entry) && entry.decision.batchId === batchId,
+    );
+    removed.forEach((entry) => this.clearTimerFor(entry.decision.ticket));
+    this.setEntries(this.entries.filter((entry) => !removed.includes(entry)));
     this.notify();
     this.resolveIdle();
-    return newest.decision;
+    return Object.freeze(removed.map((entry) => entry.decision));
+  }
+
+  private hasEntryFor(row: SessionRow): boolean {
+    return this.entries.some((entry) => entry.decision.row.id === row.id);
+  }
+
+  private add(decisions: readonly Decision[]): void {
+    if (decisions.length === 0) return;
+    const now = this.deps.now();
+    this.nextTicket += decisions.length;
+    const entries = decisions.map((decision): OutboxEntry =>
+      Object.freeze({ decision, state: 'pending', sendAt: now + UNDO_WINDOW_MS[decision.action] }),
+    );
+    this.setEntries([...this.entries, ...entries]);
+    decisions.forEach((decision) =>
+      this.timers.set(
+        decision.ticket,
+        this.deps.setTimer(() => this.due(decision.ticket), UNDO_WINDOW_MS[decision.action]),
+      ),
+    );
+    this.notify();
   }
 
   flush(): void {

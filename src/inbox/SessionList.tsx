@@ -16,6 +16,7 @@ export const RowRenderProbe = createContext<((id: string) => void) | null>(null)
 interface RowProps {
   readonly row: SessionRow;
   readonly selected: boolean;
+  readonly marked: boolean;
   readonly onSelect: (id: string) => void;
 }
 
@@ -23,9 +24,22 @@ const rowDomId = (id: string): string => `session-row-${id}`;
 
 const CHIP = 'shrink-0 rounded px-1.5 py-px text-[11px] leading-4';
 
+const STATUS_STYLES: Readonly<Record<string, string>> = {
+  unclassified: 'bg-neutral-500/10 opacity-70',
+  unfinished: 'bg-amber-500/15 text-amber-800 dark:text-amber-300',
+  blocked: 'bg-red-500/15 text-red-800 dark:text-red-300',
+  finished: 'bg-green-500/15 text-green-800 dark:text-green-400',
+  abandoned: 'bg-neutral-500/10 italic opacity-70',
+};
+
+function statusStyle(status: string): string {
+  return STATUS_STYLES[status] ?? 'bg-neutral-500/10 italic';
+}
+
 const SessionRowItem = memo(function SessionRowItem({
   row,
   selected,
+  marked,
   onSelect,
 }: RowProps): ReactElement {
   useContext(RowRenderProbe)?.(row.id);
@@ -35,14 +49,21 @@ const SessionRowItem = memo(function SessionRowItem({
       id={rowDomId(row.id)}
       role="option"
       aria-selected={selected}
+      aria-checked={marked ? true : undefined}
       data-row-id={row.id}
       onClick={() => onSelect(row.id)}
       style={{ height: ROW_HEIGHT }}
       className={`flex cursor-default flex-col justify-center gap-0.5 border-b border-neutral-200 px-3 dark:border-neutral-800 ${
-        selected ? 'bg-blue-500/15' : 'hover:bg-neutral-500/5'
+        selected ? 'bg-blue-500/15' : marked ? 'bg-blue-500/5' : 'hover:bg-neutral-500/5'
       }`}
     >
       <div className="flex min-w-0 items-center gap-2">
+        {marked && (
+          <span
+            aria-hidden="true"
+            className="size-2 shrink-0 rounded-sm bg-blue-600 dark:bg-blue-400"
+          />
+        )}
         {row.running === true && (
           <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-green-500" />
         )}
@@ -60,6 +81,7 @@ const SessionRowItem = memo(function SessionRowItem({
         <span className="shrink-0 text-xs opacity-60">{row.age_human}</span>
       </div>
       <div className="flex min-w-0 items-center gap-2 text-xs">
+        <span className={`${CHIP} ${statusStyle(row.status)}`}>{row.status}</span>
         <span className="shrink-0 opacity-70">{row.project_label}</span>
         <span className="min-w-0 flex-1 truncate opacity-60">{summary}</span>
         <span className={`${CHIP} bg-neutral-500/10 opacity-80`}>{row.agent}</span>
@@ -71,6 +93,7 @@ const SessionRowItem = memo(function SessionRowItem({
 export interface SessionListProps {
   readonly rows: readonly SessionRow[];
   readonly selectedId: string | null;
+  readonly marks: ReadonlySet<string>;
   readonly scrollTop: number;
   readonly viewport: number;
   readonly onScroll: (scrollTop: number) => void;
@@ -81,7 +104,8 @@ export interface SessionListProps {
 }
 
 export const SessionList = memo(function SessionList(props: SessionListProps): ReactElement {
-  const { rows, selectedId, scrollTop, viewport, onScroll, onResize, onSelect, listRef } = props;
+  const { rows, selectedId, marks, scrollTop, viewport, onScroll, onResize, onSelect, listRef } =
+    props;
 
   useLayoutEffect(() => {
     const node = listRef.current;
@@ -120,6 +144,7 @@ export const SessionList = memo(function SessionList(props: SessionListProps): R
               key={row.id}
               row={row}
               selected={row.id === selectedId}
+              marked={marks.has(row.id)}
               onSelect={onSelect}
             />
           ))}

@@ -3,7 +3,10 @@ import type {
   AppInfo,
   DecideOutcome,
   DecideRequest,
+  HandoffRequest,
+  HandoffResponse,
   ListResponse,
+  SetupStatus,
   TailsResponse,
 } from '../api/types';
 import { makeList, makeScanSummary } from './fixtures';
@@ -69,12 +72,38 @@ export function okOutcome(
     action: request.action,
     id: request.id,
     status: 'ok',
+    code: null,
     reason: null,
     message: 'done',
     wrote: true,
     path: null,
     warnings: [],
     ...overrides,
+  };
+}
+
+export const CURRENT_SETUP: SetupStatus = {
+  state: 'current',
+  installed: '0.2.0',
+  minimum: '0.2.0',
+  latest: '0.2.0',
+  uv_available: true,
+  can_install: true,
+};
+
+function okHandoff(request: HandoffRequest): HandoffResponse {
+  return {
+    version: 1,
+    kind: 'handoff',
+    purpose: 'triage',
+    status: 'ok',
+    code: null,
+    reason: null,
+    source: request.agent,
+    agent: request.agent,
+    project_key: request.project_key,
+    cwd: request.project_key,
+    argv: [request.agent, 'triage prompt'],
   };
 }
 
@@ -108,7 +137,21 @@ export function createFakeApi(initial: ListResponse = makeList([])): FakeApi {
     cachedList: () => Promise.resolve(null),
     decide: (request) => Promise.resolve(okOutcome(request)),
     resume: (id) => Promise.resolve({ command: `rl resume ${id}`, launched: false, via: 'iterm2' }),
+    previewHandoff: (request) => Promise.resolve(okHandoff(request)),
+    launchHandoff: (request) =>
+      Promise.resolve({
+        command: `rl handoff triage --project=${request.project_key}`,
+        launched: true,
+        via: 'iterm2',
+      }),
     appInfo: () => Promise.resolve(NATIVE_INFO),
+    setupStatus: () => Promise.resolve(CURRENT_SETUP),
+    installRingleader: () => Promise.resolve(CURRENT_SETUP),
+    installUv: () => Promise.resolve(CURRENT_SETUP),
+    setupPrefs: () => Promise.resolve({ onboarded: true, prompt_updates: true }),
+    saveSetupPrefs: () => Promise.resolve(),
+    installPresence: () => Promise.resolve(),
+    installAgentExtras: () => Promise.resolve(),
     setPending: () => Promise.resolve(),
     closeAck: () => Promise.resolve(),
     closeCancel: () => Promise.resolve(),
@@ -137,7 +180,16 @@ export function createFakeApi(initial: ListResponse = makeList([])): FakeApi {
     cachedList: () => call('cachedList'),
     decide: (request) => call('decide', request),
     resume: (id) => call('resume', id),
+    previewHandoff: (request) => call('previewHandoff', request),
+    launchHandoff: (request) => call('launchHandoff', request),
     appInfo: () => call('appInfo'),
+    setupStatus: () => call('setupStatus'),
+    installRingleader: () => call('installRingleader'),
+    installUv: () => call('installUv'),
+    setupPrefs: () => call('setupPrefs'),
+    saveSetupPrefs: (prefs) => call('saveSetupPrefs', prefs),
+    installPresence: () => call('installPresence'),
+    installAgentExtras: () => call('installAgentExtras'),
     setPending: (count) => call('setPending', count),
     closeAck: () => call('closeAck'),
     closeCancel: () => call('closeCancel'),

@@ -1,6 +1,6 @@
 # Circus
 
-A macOS desktop app for [ringleader](../../ringleader/dev2). Circus shows the dormant agent sessions ringleader tracks as an inbox: a session list, a reading pane with the end of the transcript, and one-key decisions (harvest and archive, archive, delete, snooze, keep long-term, keep going) with undo. Enrich, Triage and Harvest tabs exist as placeholders. Everything the app knows about sessions comes from ringleader's versioned JSON mode (`--json` on `rl inbox`, `rl data export` and the guarded `rl session` verbs).
+A macOS desktop app for [ringleader](https://github.com/nielsmadan/ringleader). Circus shows the dormant agent sessions ringleader tracks as an inbox: a session list, a reading pane with the end of the transcript, and one-key decisions (harvest and archive, archive, delete, snooze, keep long-term, keep going) with undo. Archive and Harvests tabs exist as placeholders. Everything the app knows about sessions comes from ringleader's versioned JSON mode (`--json` on `rl inbox`, `rl data export` and the guarded `rl session` verbs).
 
 Tauri 2, React 19, TypeScript, Rust. Unsigned, no updater; macOS only.
 
@@ -9,8 +9,8 @@ Tauri 2, React 19, TypeScript, Rust. Unsigned, no updater; macOS only.
 - macOS 12 or later
 - Node 24 and pnpm 12.9.0 (`packageManager` in `package.json`)
 - Rust stable with `clippy` and `rustfmt`, `just`, `lefthook`
-- for the sandbox recipes: the ringleader checkout at `../../ringleader/dev2` (override with `CIRCUS_RINGLEADER`) with `uv sync` run in it
-- for real use: an `rl` installed from a ringleader checkout that has the `--json` commands (`just install` in that checkout)
+- `uv`, `jq` and `gh` (the dev recipes fetch the ringleader release pinned in `ringleader.json`)
+- for real use: nothing else; on first launch Circus offers to install or update ringleader with `uv tool install`
 
 ## Quick start
 
@@ -24,11 +24,11 @@ just build-debug    # src-tauri/target/debug/bundle/macos/Circus.app
 
 `pnpm install` fetches the three ShortcutKit packages from the Git commit pinned in `package.json`; Vite compiles their TypeScript sources with Circus. No sibling ShortcutKit checkout or npm release is needed.
 
-`just check` runs everything CI runs. `just doctor` reports missing tools. `just run` needs an `rl` with the `--json` commands on your login shell's PATH (`just install` in the ringleader checkout).
+`just check` runs everything CI runs. `just doctor` reports missing tools. `just run` starts with onboarding the first time, which installs the pinned ringleader if needed.
 
 ## Configuration
 
-`Circus.app` reads `settings.json` from its app config directory (the path appears in the error when `rl` cannot be found):
+`Circus.app` reads `settings.json` from its app config directory (the path appears in the error when `rl` cannot be found; the onboarding screen installs ringleader when it is missing):
 
 ```json
 {
@@ -38,7 +38,7 @@ just build-debug    # src-tauri/target/debug/bundle/macos/Circus.app
 ```
 
 - `rl_command` — argv array used instead of searching for `rl`.
-- `terminal_command` — argv array that replaces the iTerm2 launcher for resume; `{command}` inside any element is replaced by the `rl resume …` command line.
+- `terminal_command` — argv array that replaces the iTerm2 launcher for resume and the triage hand-off; `{command}` inside any element is replaced by the command line to run.
 
 View › Appearance switches between Follow System (the default), Light and Dark. The choice is saved to `preferences.json` in the same directory and applied at the next launch; the app writes that file itself.
 

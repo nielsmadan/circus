@@ -5,21 +5,18 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 T="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$T"' EXIT
 
-mkdir -p "$T/rl/scripts" "$T/rl/.venv/bin" "$T/bin" "$T/work" "$T/empty" "$T/norl/scripts" "$T/norl/.venv/bin" "$T/it's/scripts" "$T/it's/.venv/bin"
-: > "$T/rl/scripts/gui_world.py"
-: > "$T/norl/scripts/gui_world.py"
-: > "$T/it's/scripts/gui_world.py"
-printf '#!/bin/sh\nexit 0\n' > "$T/it's/.venv/bin/rl"
-chmod +x "$T/it's/.venv/bin/rl"
-printf '#!/bin/sh\nexit 0\n' > "$T/norl/.venv/bin/rl"
-printf '#!/bin/sh\nexit 0\n' > "$T/rl/.venv/bin/rl"
-chmod +x "$T/rl/.venv/bin/rl"
+mkdir -p "$T/bin" "$T/work" "$T/empty"
+for d in rl norl "it's"; do mkdir -p "$T/$d/venv/bin"; done
+printf '#!/bin/sh\nexit 0\n' > "$T/rl/venv/bin/rl"
+printf '#!/bin/sh\nexit 0\n' > "$T/norl/venv/bin/rl"
+printf '#!/bin/sh\nexit 0\n' > "$T/it's/venv/bin/rl"
+chmod +x "$T/rl/venv/bin/rl" "$T/it's/venv/bin/rl"
 
-cat > "$T/bin/uv" <<'UV'
+cat > "$T/bin/fake-python" <<'PY'
 #!/usr/bin/env bash
 set -euo pipefail
 vars="XDG_DATA_HOME XDG_STATE_HOME SESSION_TRACKER_PROJECTS_DIR CODEX_SESSIONS_DIR PI_SESSIONS_DIR FACTORY_HOME_OVERRIDE RINGLEADER_CLAUDE_SETTINGS"
-case "$FAKE_UV_MODE" in
+case "$FAKE_GEN_MODE" in
   fail)
     echo "export XDG_DATA_HOME=/tmp/live"
     exit 3
@@ -35,21 +32,22 @@ case "$FAKE_UV_MODE" in
       shift
     done
     mkdir -p "$root"
-    if [ "$FAKE_UV_MODE" = nomarker ]; then rm -f "$root/.gui-world"; else : > "$root/.gui-world"; fi
+    if [ "$FAKE_GEN_MODE" = nomarker ]; then rm -f "$root/.gui-world"; else : > "$root/.gui-world"; fi
     for var in $vars; do echo "export $var='$root/$var'"; done
-    if [ "$FAKE_UV_MODE" = badpath ]; then
+    if [ "$FAKE_GEN_MODE" = badpath ]; then
       echo "export PATH=\"\$PATH\""
     else
       echo "export PATH='$root/bin':\"\$PATH\""
     fi
     ;;
 esac
-UV
-chmod +x "$T/bin/uv"
+PY
+chmod +x "$T/bin/fake-python"
+for d in rl norl "it's"; do cp "$T/bin/fake-python" "$T/$d/venv/bin/python"; done
 
 run_case() {
   local mode="$1" project="$2"
-  (cd "$T/work" && PATH="$T/bin:$PATH" CIRCUS_RINGLEADER="$project" FAKE_UV_MODE="$mode" \
+  (cd "$T/work" && CIRCUS_RINGLEADER_DIR="$project" FAKE_GEN_MODE="$mode" \
     bash -c 'set -euo pipefail; source "$1/scripts/sandbox-env.sh"; printf "%s\n" "$CIRCUS_ENV_LABEL" "$CIRCUS_WORLD_ROOT"' _ "$REPO")
 }
 
@@ -67,9 +65,9 @@ expect_failure() {
   echo "ok   $name"
 }
 
-expect_failure "uv failure exports nothing" fail "$T/rl"
+expect_failure "a generator failure exports nothing" fail "$T/rl"
 expect_failure "exports outside the world are refused" outside "$T/rl"
-expect_failure "missing gui_world.py is refused" good "$T/empty"
+expect_failure "a directory without the release venv is refused" good "$T/empty"
 expect_failure "a PATH without the world bin first is refused" badpath "$T/rl"
 expect_failure "a world without the .gui-world marker is refused" nomarker "$T/rl"
 expect_failure "a non-executable venv rl is refused" good "$T/norl"
@@ -82,11 +80,11 @@ if [ "$out" != "$expected" ]; then
 fi
 echo "ok   good world exports the sandbox label and world root"
 
-out="$(cd "$T/work" && PATH="$T/bin:$PATH" CIRCUS_RINGLEADER="$T/it's" FAKE_UV_MODE=good \
+out="$(cd "$T/work" && CIRCUS_RINGLEADER_DIR="$T/it's" FAKE_GEN_MODE=good \
   bash -c 'set -euo pipefail; source "$1/scripts/sandbox-env.sh"; python3 -c "import shlex,sys; print(shlex.split(sys.argv[1])[0])" "$CIRCUS_RL"' _ "$REPO" 2>/dev/null)" \
   || { echo "FAIL quoted path: exited non-zero" >&2; exit 1; }
-if [ "$out" != "$T/it's/.venv/bin/rl" ]; then
+if [ "$out" != "$T/it's/venv/bin/rl" ]; then
   echo "FAIL quoted path: got '$out'" >&2
   exit 1
 fi
-echo "ok   CIRCUS_RL survives a quote in the project path"
+echo "ok   CIRCUS_RL survives a quote in the release directory path"

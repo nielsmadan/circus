@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-setup-prefs"
+description = "Enables the setup_prefs command without any pre-configured scope."
+commands.allow = ["setup_prefs"]
+
+[[permission]]
+identifier = "deny-setup-prefs"
+description = "Denies the setup_prefs command without any pre-configured scope."
+commands.deny = ["setup_prefs"]

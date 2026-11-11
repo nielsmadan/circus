@@ -8,12 +8,21 @@
     "allow-rl-scan",
     "allow-rl-tails",
     "allow-rl-decide",
+    "allow-rl-handoff-preview",
     "allow-cached-list",
     "allow-app-info",
     "allow-resume-session",
+    "allow-launch-handoff",
     "allow-set-pending",
     "allow-close-ack",
     "allow-close-cancel",
-    "allow-app-exit"
+    "allow-app-exit",
+    "allow-setup-status",
+    "allow-install-ringleader",
+    "allow-install-uv",
+    "allow-setup-prefs",
+    "allow-save-setup-prefs",
+    "allow-install-presence",
+    "allow-install-agent-extras"
   ]
 }

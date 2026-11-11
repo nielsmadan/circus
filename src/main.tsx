@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { createCircusApi, type CircusApi } from './api/client';
-import type { ListResponse } from './api/types';
+import type { ListResponse, SetupStatus } from './api/types';
 import type { MemoryApi } from './dev/memoryApi';
 import { createShortcutRegistry } from './shortcuts/contexts';
 import { ShortcutKitProvider } from '@shortcutkit/react';
@@ -29,6 +29,9 @@ async function createApi(): Promise<CircusApi> {
   const fake = createMemoryApi(seed, {
     latencyMs: Number(env.VITE_FAKE_LATENCY_MS ?? 150),
     cache: env.VITE_FAKE_CACHE !== '0',
+    ...(env.VITE_FAKE_SETUP === undefined
+      ? {}
+      : { setup: env.VITE_FAKE_SETUP as SetupStatus['state'], onboarded: false }),
   });
   window.circusFake = fake;
   return fake;

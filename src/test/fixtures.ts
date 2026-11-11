@@ -1,4 +1,4 @@
-import type { ListResponse, ScanSummary, SessionRow } from '../api/types';
+import type { Home, ListResponse, NextStep, ScanSummary, SessionRow } from '../api/types';
 
 const BASE_ROW: SessionRow = {
   id: 'claude-code:s0',
@@ -55,6 +55,43 @@ export function makeList(
     roundup: { last_at: null, age_human: null, stale: false, stale_hours: 8 },
     scan: null,
     sessions: [...rows],
+    ...overrides,
+  };
+}
+
+export function makeStep(
+  kind: NextStep['kind'],
+  overrides: { count?: number; project_key?: string; id?: string } = {},
+): NextStep {
+  return {
+    kind,
+    deletes: kind === 'roundup',
+    costs_model: kind === 'roundup',
+    count: null,
+    project_key: null,
+    id: null,
+    ...overrides,
+  } as NextStep;
+}
+
+export function makeHome(overrides: Partial<Home> = {}): Home {
+  return {
+    counts: {
+      triage_total: 0,
+      live: 0,
+      unclassified: 0,
+      blocked: 0,
+      stale: 0,
+      kept: 0,
+      projects: 0,
+      spread_projects: 0,
+    },
+    pending_harvests: 0,
+    projects: [],
+    waking_soon: [],
+    in_flight: [],
+    rows: [],
+    next_steps: [],
     ...overrides,
   };
 }

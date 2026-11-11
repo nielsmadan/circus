@@ -31,13 +31,25 @@ function Skeleton(): ReactElement {
   );
 }
 
-function Transcript({
-  item,
-  sessionId,
+function Problem({
+  text,
+  detail,
 }: {
-  readonly item: TailItem;
-  readonly sessionId: string;
+  readonly text: string;
+  readonly detail: string;
 }): ReactElement {
+  return (
+    <div className="text-sm">
+      <p>{text}</p>
+      <details className="text-xs opacity-70">
+        <summary className="cursor-default">Details</summary>
+        <p className="whitespace-pre-wrap">{detail}</p>
+      </details>
+    </div>
+  );
+}
+
+function Transcript({ item }: { readonly item: TailItem }): ReactElement {
   const chunks = useMemo(() => chunkTail(item.text), [item]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
@@ -48,8 +60,8 @@ function Transcript({
     <div className="flex min-h-0 flex-col gap-2">
       {item.truncated && (
         <p className="text-xs opacity-70">
-          Showing the last {item.max_chars.toLocaleString('en-US')} characters —{' '}
-          <code>rl data export {sessionId}</code> writes the whole conversation
+          Showing the last {item.max_chars.toLocaleString('en-US')} characters — older messages
+          aren’t shown here
         </p>
       )}
       <div
@@ -74,7 +86,7 @@ function Transcript({
 function ConversationBody({ row, item, error }: ConversationProps): ReactElement {
   if (item === undefined) {
     if (error !== null) {
-      return <p className="text-sm">Couldn’t load the conversation: {error.message}</p>;
+      return <Problem text="Couldn’t load the conversation" detail={error.message} />;
     }
     return <Skeleton />;
   }
@@ -82,7 +94,7 @@ function ConversationBody({ row, item, error }: ConversationProps): ReactElement
   return (
     <>
       {error !== null && (
-        <p className="text-sm">Couldn’t refresh the conversation: {error.message}</p>
+        <Problem text="Couldn’t refresh the conversation" detail={error.message} />
       )}
       {stale && (
         <p className="text-xs opacity-70">
@@ -90,9 +102,9 @@ function ConversationBody({ row, item, error }: ConversationProps): ReactElement
         </p>
       )}
       {item.unavailable === null ? (
-        <Transcript item={item} sessionId={row.session_id} />
+        <Transcript item={item} />
       ) : (
-        <p className="text-sm opacity-70">Conversation unavailable: {item.unavailable}</p>
+        <Problem text="Conversation unavailable" detail={item.unavailable} />
       )}
     </>
   );

@@ -1,6 +1,5 @@
 manifest := "src-tauri/Cargo.toml"
-ringleader := env_var_or_default("CIRCUS_RINGLEADER", "../../ringleader/dev2")
-golden_names := "contract-list.json contract-tails.json contract-outcome-ok.json contract-outcome-refused.json"
+golden_names := "contract-list.json contract-tails.json contract-outcome-ok.json contract-outcome-refused.json contract-handoff.json"
 
 [private]
 default:
@@ -67,11 +66,9 @@ doctor:
         printf '  MISSING  %-12s run: just setup\n' 'git hooks'; fail=1
     fi
     warn uv "https://docs.astral.sh/uv/getting-started/installation/"
-    if [ -d "{{ringleader}}" ]; then
-        printf '  ok       %s\n' "{{ringleader}}"
-    else
-        printf '  warn     %-12s needed for the sandbox recipes\n' "{{ringleader}}"
-    fi
+    warn jq "https://jqlang.org/download/"
+    warn gh "https://cli.github.com"
+    printf '  ok       ringleader %s pinned in ringleader.json\n' "$(jq -r .latest ringleader.json 2>/dev/null || echo '?')"
     if {{just_executable()}} --justfile {{justfile()}} golden-check >/dev/null 2>&1; then
         printf '  ok       golden documents\n'
     else
@@ -127,27 +124,45 @@ sandbox: ensure-dist
     source scripts/sandbox-env.sh
     pnpm tauri dev
 
-# Copy ringleader's golden contract documents into src/test/golden.
+# Stage the pinned ringleader release (or $CIRCUS_RINGLEADER_DIR) and print its directory.
+[private]
+ringleader-dir:
+    @if [ -n "${CIRCUS_RINGLEADER_DIR:-}" ]; then printf '%s\n' "$CIRCUS_RINGLEADER_DIR"; else scripts/fetch-ringleader.sh; fi
+
+# Pin a ringleader release: version and wheel sha256 from its SHA256SUMS.
+pin-ringleader version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    repository="$(jq -r .repository ringleader.json)"
+    wheel="ringleader-{{version}}-py3-none-any.whl"
+    sums="$(gh release download "v{{version}}" --repo "$repository" --pattern SHA256SUMS --output -)"
+    sha="$(printf '%s\n' "$sums" | awk -v w="$wheel" '$2 == w || $2 == "*" w { print $1 }')"
+    [ "${#sha}" -eq 64 ] || { echo "no sha256 for $wheel in v{{version}}'s SHA256SUMS" >&2; exit 1; }
+    jq --arg v "{{version}}" --arg w "$wheel" --arg s "$sha" '.latest = $v | .wheel = $w | .sha256 = $s' ringleader.json > ringleader.json.tmp
+    mv ringleader.json.tmp ringleader.json
+    printf 'pinned ringleader %s (%s)\n' "{{version}}" "$sha"
+
+# Build release-shaped ringleader assets from a checkout, for contract work before a release.
+stage-ringleader checkout:
+    @scripts/stage-ringleader.sh "{{checkout}}"
+
+# Copy the pinned release's golden contract documents into src/test/golden.
 sync-golden:
     #!/usr/bin/env bash
     set -euo pipefail
-    source_dir="{{ringleader}}/tests/golden"
-    shopt -s nullglob
-    files=("$source_dir"/contract-*.json)
-    if [ "${#files[@]}" -eq 0 ]; then
-        echo "no golden documents in $source_dir" >&2
-        exit 1
-    fi
+    dir="$({{just_executable()}} --justfile {{justfile()}} ringleader-dir)"
     mkdir -p src/test/golden
-    cp "${files[@]}" src/test/golden/
-    printf 'copied %s golden documents from %s\n' "${#files[@]}" "$source_dir"
+    tar -xzf "$dir/contract-golden.tar.gz" -C src/test/golden
+    printf 'copied the golden documents from %s\n' "$dir"
 
-# Fail when src/test/golden differs from ringleader's golden documents.
+# Fail when src/test/golden differs from the pinned release's golden documents.
 golden-check:
     #!/usr/bin/env bash
     set -uo pipefail
-    source_dir="{{ringleader}}/tests/golden"
-    shopt -s nullglob
+    dir="$({{just_executable()}} --justfile {{justfile()}} ringleader-dir)" || exit 1
+    source_dir="$(mktemp -d)"
+    trap 'rm -rf "$source_dir"' EXIT
+    tar -xzf "$dir/contract-golden.tar.gz" -C "$source_dir" || exit 1
     names=({{golden_names}})
     for file in "$source_dir"/contract-*.json; do
         names+=("$(basename "$file")")

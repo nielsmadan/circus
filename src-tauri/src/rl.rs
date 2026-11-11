@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use crate::contract::{DecideRequest, DecisionAction, Envelope, TailsRequest};
+use crate::contract::{DecideRequest, DecisionAction, Envelope, HandoffRequest, TailsRequest};
 use crate::error::{CircusError, ErrorKind};
 use crate::process::{OnDeadline, ProcessOutput, ProcessRunner, ProcessSpec, RunError};
 
@@ -10,19 +10,22 @@ pub const SCAN_TIMEOUT: Duration = Duration::from_secs(300);
 pub const TAILS_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DECIDE_TIMEOUT: Duration = Duration::from_secs(120);
 pub const HARVEST_TIMEOUT: Duration = Duration::from_secs(420);
+pub const HANDOFF_TIMEOUT: Duration = Duration::from_secs(30);
 pub const TAIL_MAX_IDS: usize = 16;
 const TAIL_MIN_CHARS: u32 = 1_000;
 const TAIL_MAX_CHARS: u32 = 2_000_000;
 const SESSION_ID_MAX_CHARS: usize = 1_000;
 const TIME_MAX_CHARS: usize = 64;
 const FINGERPRINT_MAX_CHARS: usize = 256;
+const PROJECT_KEY_MAX_CHARS: usize = 4_096;
+const AGENT_MAX_CHARS: usize = 32;
 pub(crate) const STDERR_TAIL_CHARS: usize = 2_000;
 const CONTRACT_VERSION: u64 = 1;
 const EMPTY_TAILS: &[u8] = br#"{"version":1,"kind":"tails","items":[]}"#;
-const RL_TOO_OLD: &str = "The installed rl is too old for circus: it lacks the --json inbox, export and session commands. Run `just install` in your ringleader checkout.";
+const RL_TOO_OLD: &str = "The installed ringleader is too old for Circus";
 const CONTRACT_COMMANDS: &[&str] = &[
     "inbox", "data", "export", "session", "archive", "delete", "harvest", "snooze", "keep", "mark",
-    "reviewed",
+    "reviewed", "handoff", "triage",
 ];
 
 pub fn valid_session_id(id: &str) -> bool {
@@ -40,6 +43,19 @@ fn valid_time(text: &str) -> bool {
 
 fn valid_fingerprint(text: &str) -> bool {
     (1..=FINGERPRINT_MAX_CHARS).contains(&text.len()) && text.bytes().all(|b| b.is_ascii_graphic())
+}
+
+fn valid_project_key(text: &str) -> bool {
+    (1..=PROJECT_KEY_MAX_CHARS).contains(&text.chars().count())
+        && !text.chars().any(char::is_control)
+}
+
+fn valid_agent(text: &str) -> bool {
+    (1..=AGENT_MAX_CHARS).contains(&text.len())
+        && !text.starts_with('-')
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 fn strings(items: &[&str]) -> Vec<String> {
@@ -92,7 +108,7 @@ pub fn tails_args(req: &TailsRequest) -> Result<Option<Vec<String>>, CircusError
 pub fn decide_args(req: &DecideRequest) -> Result<Vec<String>, CircusError> {
     if !valid_session_id(&req.id) || !req.id.contains(':') {
         return Err(CircusError::invalid(format!(
-            "circus cannot pass the session id {:?} to rl",
+            "Circus can't use the session id {:?}",
             req.id
         )));
     }
@@ -148,6 +164,39 @@ pub fn decide_args(req: &DecideRequest) -> Result<Vec<String>, CircusError> {
         .collect())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HandoffMode {
+    Preview,
+    Launch,
+}
+
+pub fn handoff_args(req: &HandoffRequest, mode: HandoffMode) -> Result<Vec<String>, CircusError> {
+    if !valid_project_key(&req.project_key) {
+        return Err(CircusError::invalid(format!(
+            "invalid project key: {:?}",
+            req.project_key
+        )));
+    }
+    if !valid_agent(&req.agent) {
+        return Err(CircusError::invalid(format!(
+            "invalid agent: {:?}",
+            req.agent
+        )));
+    }
+    let preview: &[&str] = match mode {
+        HandoffMode::Preview => &["--dry-run", "--json"],
+        HandoffMode::Launch => &[],
+    };
+    Ok(strings(&["handoff", "triage"])
+        .into_iter()
+        .chain([
+            format!("--project={}", req.project_key),
+            format!("--agent={}", req.agent),
+        ])
+        .chain(strings(preview))
+        .collect())
+}
+
 pub fn decide_timeout(action: DecisionAction) -> Duration {
     match action {
         DecisionAction::Harvest => HARVEST_TIMEOUT,
@@ -180,7 +229,7 @@ fn is_too_old(output: &ProcessOutput) -> bool {
             .any(|line| rejects_json_flag(line) || names_a_contract_command(line))
 }
 
-fn non_empty_tail(stderr: &str) -> Option<String> {
+pub(crate) fn non_empty_tail(stderr: &str) -> Option<String> {
     (!stderr.is_empty()).then(|| last_chars(stderr, STDERR_TAIL_CHARS))
 }
 
@@ -188,7 +237,7 @@ pub fn parse_document(output: ProcessOutput, kind: &str) -> Result<Vec<u8>, Circ
     if std::str::from_utf8(&output.stdout).is_err() {
         return Err(CircusError::new(
             ErrorKind::BadOutput,
-            "rl printed output that is not UTF-8",
+            "the response was not UTF-8",
         ));
     }
     let failed = |kind: ErrorKind, message: String| CircusError {
@@ -206,7 +255,7 @@ pub fn parse_document(output: ProcessOutput, kind: &str) -> Result<Vec<u8>, Circ
             let message = envelope
                 .message
                 .clone()
-                .unwrap_or_else(|| "rl reported an error".to_string());
+                .unwrap_or_else(|| "an unknown error".to_string());
             return Err(failed(ErrorKind::RlError, message));
         }
         if envelope.version != CONTRACT_VERSION {
@@ -226,16 +275,16 @@ pub fn parse_document(output: ProcessOutput, kind: &str) -> Result<Vec<u8>, Circ
                 Some(envelope) => {
                     format!("expected a {kind} document, got {}", envelope.kind)
                 }
-                None => format!("rl did not print a {kind} document"),
+                None => format!("no {kind} response came back"),
             },
         )),
         Some(code) => Err(failed(
             ErrorKind::Failed,
-            format!("rl exited with code {code}"),
+            format!("it exited with code {code}"),
         )),
         None => Err(failed(
             ErrorKind::Failed,
-            "rl was killed by a signal".to_string(),
+            "it was stopped by a signal".to_string(),
         )),
     }
 }
@@ -243,16 +292,32 @@ pub fn parse_document(output: ProcessOutput, kind: &str) -> Result<Vec<u8>, Circ
 pub fn map_run_error(error: RunError, not_found_message: &str) -> CircusError {
     match error {
         RunError::NotFound => CircusError::new(ErrorKind::RlNotFound, not_found_message),
-        RunError::Timeout => CircusError::new(ErrorKind::Timeout, "rl did not finish in time"),
-        RunError::OutputTooLarge => CircusError::new(
-            ErrorKind::BadOutput,
-            "rl printed more output than circus accepts",
-        ),
+        RunError::Timeout => CircusError::new(ErrorKind::Timeout, "it did not finish in time"),
+        RunError::OutputTooLarge => {
+            CircusError::new(ErrorKind::BadOutput, "the response was too large")
+        }
         RunError::Detached => {
-            CircusError::new(ErrorKind::Failed, "rl was left running past its deadline")
+            CircusError::new(ErrorKind::Failed, "it was still running past its deadline")
         }
         RunError::Io(message) => CircusError::new(ErrorKind::Failed, message),
     }
+}
+
+pub(crate) fn command_spec(
+    command: &[String],
+    path_env: Option<&str>,
+    args: Vec<String>,
+    timeout: Duration,
+) -> Option<ProcessSpec> {
+    let (program, prefix) = command.split_first()?;
+    Some(ProcessSpec {
+        program: program.clone(),
+        args: prefix.iter().cloned().chain(args).collect(),
+        path_env: path_env.map(str::to_string),
+        extra_env: Vec::new(),
+        timeout,
+        on_deadline: OnDeadline::Terminate,
+    })
 }
 
 pub struct RlClient<R: ProcessRunner> {
@@ -296,26 +361,24 @@ impl<R: ProcessRunner> RlClient<R> {
         self.call(decide_args(req)?, decide_timeout(req.action), "outcome")
     }
 
+    pub fn handoff_preview(&self, req: &HandoffRequest) -> Result<Vec<u8>, CircusError> {
+        self.call(
+            handoff_args(req, HandoffMode::Preview)?,
+            HANDOFF_TIMEOUT,
+            "handoff",
+        )
+    }
+
     fn call(
         &self,
         args: Vec<String>,
         timeout: Duration,
         kind: &str,
     ) -> Result<Vec<u8>, CircusError> {
-        let Some((program, prefix)) = self.command.split_first() else {
-            return Err(CircusError::new(
-                ErrorKind::RlNotFound,
-                self.not_found_message.clone(),
-            ));
-        };
-        let spec = ProcessSpec {
-            program: program.clone(),
-            args: prefix.iter().cloned().chain(args).collect(),
-            path_env: self.path_env.clone(),
-            extra_env: Vec::new(),
-            timeout,
-            on_deadline: OnDeadline::Terminate,
-        };
+        let spec = command_spec(&self.command, self.path_env.as_deref(), args, timeout)
+            .ok_or_else(|| {
+                CircusError::new(ErrorKind::RlNotFound, self.not_found_message.clone())
+            })?;
         let output = self
             .runner
             .run(&spec)
@@ -397,6 +460,104 @@ mod tests {
             fingerprint: None,
             until: None,
         }
+    }
+
+    fn handoff_req(project_key: &str, agent: &str) -> HandoffRequest {
+        HandoffRequest {
+            project_key: project_key.to_string(),
+            agent: agent.to_string(),
+        }
+    }
+
+    #[test]
+    fn handoff_args_pass_project_and_agent_as_flag_values() {
+        let req = handoff_req("/w/my proj", "claude-code");
+        assert_eq!(
+            handoff_args(&req, HandoffMode::Preview).expect("args"),
+            strings(&[
+                "handoff",
+                "triage",
+                "--project=/w/my proj",
+                "--agent=claude-code",
+                "--dry-run",
+                "--json"
+            ])
+        );
+        assert_eq!(
+            handoff_args(&req, HandoffMode::Launch).expect("args"),
+            strings(&[
+                "handoff",
+                "triage",
+                "--project=/w/my proj",
+                "--agent=claude-code"
+            ])
+        );
+    }
+
+    #[test]
+    fn handoff_args_reject_unpassable_values() {
+        let invalid = [
+            handoff_req("", "claude-code"),
+            handoff_req("/w/a\nb", "claude-code"),
+            handoff_req("/w/proj", "-x"),
+            handoff_req("/w/proj", "Claude Code"),
+        ];
+        for req in invalid {
+            assert_eq!(
+                kind_of(handoff_args(&req, HandoffMode::Preview)),
+                ErrorKind::InvalidArgument,
+                "{req:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn handoff_args_cap_the_project_key_and_agent_lengths() {
+        let longest_key = format!("/{}", "é".repeat(4_095));
+        let longest_agent = "a".repeat(32);
+        assert!(handoff_args(&handoff_req(&longest_key, "codex"), HandoffMode::Preview).is_ok());
+        assert!(handoff_args(&handoff_req("/w", &longest_agent), HandoffMode::Preview).is_ok());
+        let too_long_key = format!("{longest_key}x");
+        let too_long_agent = format!("{longest_agent}a");
+        for req in [
+            handoff_req(&too_long_key, "codex"),
+            handoff_req("/w", &too_long_agent),
+        ] {
+            assert_eq!(
+                kind_of(handoff_args(&req, HandoffMode::Preview)),
+                ErrorKind::InvalidArgument
+            );
+        }
+    }
+
+    #[test]
+    fn handoff_preview_runs_the_dry_run_and_returns_the_handoff_document() {
+        let document = br#"{"version":1,"kind":"handoff","status":"ok","project_key":"/w/proj"}"#;
+        let rl = client(FakeRunner::returning(document));
+        let bytes = rl
+            .handoff_preview(&handoff_req("/w/proj", "codex"))
+            .expect("preview");
+        assert_eq!(bytes, document);
+        let specs = rl.runner.recorded();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].program, "/w/.venv/bin/rl");
+        assert_eq!(
+            specs[0].args,
+            strings(&[
+                "handoff",
+                "triage",
+                "--project=/w/proj",
+                "--agent=codex",
+                "--dry-run",
+                "--json"
+            ])
+        );
+        assert_eq!(specs[0].timeout, Duration::from_secs(30));
+        let rl = client(FakeRunner::returning(LIST));
+        let error = rl
+            .handoff_preview(&handoff_req("/w/proj", "codex"))
+            .expect_err("wrong kind");
+        assert_eq!(error.message, "expected a handoff document, got list");
     }
 
     fn kind_of<T>(result: Result<T, CircusError>) -> ErrorKind {
@@ -702,7 +863,10 @@ mod tests {
         ] {
             let error = parse_document(output(b"", 2, &stderr), "list").expect_err("too old");
             assert_eq!(error.kind, ErrorKind::RlTooOld, "{stderr:?}");
-            assert!(error.message.contains("too old for circus"));
+            assert_eq!(
+                error.message,
+                "The installed ringleader is too old for Circus"
+            );
         }
     }
 
@@ -739,6 +903,10 @@ mod tests {
             }
             argvs.push(decide_args(&req).expect("args"));
         }
+        argvs.push(
+            handoff_args(&handoff_req("/w/proj", "claude-code"), HandoffMode::Preview)
+                .expect("args"),
+        );
         for argv in argvs {
             for token in argv.iter().filter(|t| !t.starts_with("--") && *t != id) {
                 assert!(

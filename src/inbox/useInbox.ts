@@ -25,11 +25,31 @@ import {
   type Landed,
   type Sequence,
 } from './coalesce';
+import {
+  advanceBatch,
+  alreadySent,
+  memberEnd,
+  startBatch,
+  type BatchProgress,
+  type MemberEnd,
+} from './batches';
 import { clientRefusal, decisionGuard, visibleSessions } from './derive';
 import {
+  alreadyPendingManyToast,
+  alreadyPendingToast,
+  appInfoFailedToast,
+  batchEnqueuedToast,
+  batchUndoToast,
+  blockedToast,
   enqueuedToast,
   isChangedRefusal,
+  oneHarvestToast,
+  quitFailedToast,
+  rescanFailedToast,
+  rescanQueuedToast,
   settledToast,
+  skippedToast,
+  sourcesUnavailableToast,
   undoToast,
   type ToastSpec,
 } from './messages';
@@ -68,7 +88,8 @@ export interface InboxController {
   readonly toasts: readonly Toast[];
   readonly decisionsBlocked: string | null;
   decide(action: DecisionAction, row: SessionRow, until?: string | null): boolean;
-  undo(): Decision | null;
+  decideMany(action: DecisionAction, rows: readonly SessionRow[], until?: string | null): boolean;
+  undo(): readonly Decision[];
   rescan(): void;
   refresh(): void;
   dismissToast(id: number): void;
@@ -118,6 +139,11 @@ function evictToasts(toasts: readonly Toast[]): readonly Toast[] {
   return toasts.filter((toast) => !victims.has(toast));
 }
 const NO_ROWS: readonly SessionRow[] = Object.freeze([]);
+
+interface Batch {
+  readonly toastId: number;
+  readonly progress: BatchProgress;
+}
 
 const DEFAULT_CLOCK: Clock = {
   now: () => Date.now(),
@@ -255,6 +281,7 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
   const closingRef = useRef(false);
   const nextToastId = useRef(1);
   const toastForTicket = useRef(new Map<number, number>());
+  const batches = useRef(new Map<number, Batch>());
   const toastTimers = useRef(new Set<unknown>());
   const clockRef = useRef(clock);
   const [engine] = useState(() => createEngine(api, clock, handlers, lastSent));
@@ -298,6 +325,35 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
     [dismissToast],
   );
 
+  const endMember = useCallback(
+    (batchId: number, batch: Batch, end: MemberEnd) => {
+      const step = advanceBatch(batch.progress, end);
+      if (step.progress === null) {
+        batches.current.delete(batchId);
+        dismissToast(batch.toastId);
+      } else {
+        batches.current.set(batchId, { ...batch, progress: step.progress });
+      }
+      if (step.summary !== null) pushToast(step.summary);
+    },
+    [dismissToast, pushToast],
+  );
+
+  const forget = useCallback(
+    (decisions: readonly Decision[]) => {
+      decisions.forEach((decision) => {
+        const batch = batches.current.get(decision.batchId);
+        if (batch === undefined) {
+          releaseToast(decision);
+          return;
+        }
+        dismissToast(batch.toastId);
+        endMember(decision.batchId, batch, 'undone');
+      });
+    },
+    [dismissToast, endMember, releaseToast],
+  );
+
   useLayoutEffect(() => {
     clockRef.current = clock;
     const land = (from: LandedList['from'], landed: Landed<undefined, ListResponse>) => {
@@ -325,8 +381,16 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
         // applied must commit before the outbox drops the entry, or the row flashes back
         flushSync(() => {
           if (effects.markApplied) setApplied((a) => markApplied(a, settled.decision.row.id, seq));
-          releaseToast(settled.decision);
-          pushToast(effects.toast);
+          const { batchId } = settled.decision;
+          const batch = batches.current.get(batchId);
+          if (batch === undefined) {
+            releaseToast(settled.decision);
+            pushToast(effects.toast);
+            return;
+          }
+          const end = memberEnd(settled);
+          if (end !== 'ok') pushToast(effects.toast);
+          endMember(batchId, batch, end);
         });
         if (effects.refetch) listFlight.request(undefined);
         if (effects.rescan) scanFlight.request(undefined);
@@ -338,12 +402,7 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
       onScanLanded(landed) {
         setScanning(false);
         if (!landed.result.ok) {
-          pushToast({
-            tone: 'warning',
-            text: `Rescan failed: ${landed.result.error.message}`,
-            undo: false,
-            detail: null,
-          });
+          pushToast(rescanFailedToast(landed.result.error.message));
           land('scan', landed);
           return;
         }
@@ -352,14 +411,7 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
         const key = unavailable.join('\n');
         if (key !== warnedSources.current) {
           warnedSources.current = key;
-          if (unavailable.length > 0) {
-            pushToast({
-              tone: 'warning',
-              text: `Sources unavailable: ${unavailable.join(', ')}`,
-              undo: false,
-              detail: null,
-            });
-          }
+          if (unavailable.length > 0) pushToast(sourcesUnavailableToast(unavailable));
         }
         land('scan', landed);
       },
@@ -381,8 +433,7 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
       () => undefined,
     );
     api.appInfo().then(setInfo, (error: unknown) => {
-      const text = `Could not read the app settings: ${toCircusError(error).message}`;
-      pushToast({ tone: 'error', text, undo: false, detail: null });
+      pushToast(appInfoFailedToast(toCircusError(error).message));
     });
     listFlight.request(undefined);
     scanFlight.request(undefined);
@@ -405,12 +456,7 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
         closingRef.current = false;
         setFinishBy(null);
         outbox.reopen();
-        pushToast({
-          tone: 'error',
-          text: `Could not quit: ${toCircusError(error).message}`,
-          undo: false,
-          detail: null,
-        });
+        pushToast(quitFailedToast(toCircusError(error).message));
       }
     };
     api
@@ -467,19 +513,12 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
     (action: DecisionAction, row: SessionRow, until: string | null = null): boolean => {
       const refusal = decisionsBlocked ?? clientRefusal(action, row);
       if (refusal !== null) {
-        pushToast({ tone: 'warning', text: refusal, undo: false, detail: null });
+        pushToast(blockedToast(refusal));
         return false;
       }
       const result = outbox.enqueue(action, row, until);
       if (!result.ok) {
-        if (result.reason === 'duplicate') {
-          pushToast({
-            tone: 'info',
-            text: `“${row.label}” already has a pending change`,
-            undo: false,
-            detail: null,
-          });
-        }
+        if (result.reason === 'duplicate') pushToast(alreadyPendingToast(row.label));
         return false;
       }
       const id = pushToast(
@@ -493,16 +532,69 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
     [decisionsBlocked, outbox, pushToast],
   );
 
-  const undo = useCallback((): Decision | null => {
-    const decision = outbox.undo();
-    if (decision !== null) releaseToast(decision);
-    pushToast(undoToast(decision, decision === null ? lastSent.current : null));
-    return decision;
-  }, [outbox, pushToast, releaseToast]);
+  const decideMany = useCallback(
+    (action: DecisionAction, rows: readonly SessionRow[], until: string | null = null): boolean => {
+      if (decisionsBlocked !== null) {
+        pushToast(blockedToast(decisionsBlocked));
+        return false;
+      }
+      if (action === 'harvest' && rows.length > 1) {
+        pushToast(oneHarvestToast());
+        return false;
+      }
+      const checked = rows.map((row) => ({ row, reason: clientRefusal(action, row) }));
+      const accepted = checked.flatMap(({ row, reason }) => (reason === null ? [row] : []));
+      const [firstSkip, ...moreSkips] = checked.flatMap(({ row, reason }) =>
+        reason === null ? [] : [{ row, reason }],
+      );
+      if (firstSkip !== undefined) pushToast(skippedToast(firstSkip, moreSkips));
+      const [only, ...others] = accepted;
+      if (only === undefined) return false;
+      if (others.length === 0) return decide(action, only, until);
+      const result = outbox.enqueueBatch(action, accepted, until);
+      if (!result.ok) return false;
+      if (result.duplicates.length > 0) {
+        pushToast(alreadyPendingManyToast(result.duplicates.length));
+      }
+      const last = result.decisions.at(-1);
+      if (last === undefined) return false;
+      const id = pushToast(
+        batchEnqueuedToast(
+          action,
+          result.decisions.length,
+          until,
+          new Date(clockRef.current.now()),
+        ),
+        UNDO_WINDOW_MS[action],
+        last.ticket,
+      );
+      batches.current.set(last.batchId, {
+        toastId: id,
+        progress: startBatch(action, result.decisions.length),
+      });
+      return true;
+    },
+    [decide, decisionsBlocked, outbox, pushToast],
+  );
+
+  const undo = useCallback((): readonly Decision[] => {
+    const removed = outbox.undoBatch();
+    const newest = removed.at(-1) ?? null;
+    const batch = newest === null ? undefined : batches.current.get(newest.batchId);
+    if (newest === null || batch === undefined) {
+      if (newest !== null) releaseToast(newest);
+      pushToast(undoToast(newest, newest === null ? lastSent.current : null));
+      return removed;
+    }
+    const undone = removed.length;
+    const sent = alreadySent(batch.progress, undone);
+    pushToast(batchUndoToast(batch.progress.action, { undone, sent }));
+    forget(removed);
+    return removed;
+  }, [forget, outbox, pushToast, releaseToast]);
 
   const rescan = useCallback(() => {
-    if (scanFlight.busy)
-      pushToast({ tone: 'info', text: 'Rescan queued', undo: false, detail: null });
+    if (scanFlight.busy) pushToast(rescanQueuedToast());
     scanFlight.request(undefined);
   }, [scanFlight, pushToast]);
 
@@ -516,8 +608,8 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
   );
 
   const discardUnsent = useCallback(() => {
-    outbox.discardUnsent().forEach(releaseToast);
-  }, [outbox, releaseToast]);
+    forget(outbox.discardUnsent());
+  }, [forget, outbox]);
 
   const closing = snapshot.closing;
   return useMemo(
@@ -534,6 +626,7 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
       toasts,
       decisionsBlocked,
       decide,
+      decideMany,
       undo,
       rescan,
       refresh,
@@ -554,6 +647,7 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
       toasts,
       decisionsBlocked,
       decide,
+      decideMany,
       undo,
       rescan,
       refresh,

@@ -49,12 +49,18 @@ pub struct DecideRequest {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+pub struct HandoffRequest {
+    pub project_key: String,
+    pub agent: String,
+}
+
+#[derive(Deserialize, Clone, Debug)]
 pub struct ResumeRequest {
     pub id: String,
 }
 
 #[derive(Serialize, Clone, Debug)]
-pub struct ResumeLaunch {
+pub struct TerminalLaunch {
     pub command: String,
     pub launched: bool,
     pub via: TerminalKind,
@@ -72,6 +78,7 @@ pub enum TerminalKind {
 pub enum RlSource {
     Env,
     Settings,
+    Installed,
     LoginShell,
     Fallback,
     Missing,
@@ -101,4 +108,44 @@ pub struct AppInfo {
 #[derive(Serialize, Clone, Copy, Debug)]
 pub struct CloseRequested {
     pub finish_in_ms: u64,
+}
+
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallState {
+    Missing,
+    TooOld,
+    Outdated,
+    Current,
+}
+
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct SetupStatus {
+    pub state: InstallState,
+    pub installed: Option<String>,
+    pub minimum: String,
+    pub latest: String,
+    pub uv_available: bool,
+    pub can_install: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetupPrefs {
+    #[serde(default)]
+    pub onboarded: bool,
+    #[serde(default = "default_true")]
+    pub prompt_updates: bool,
+}
+
+impl Default for SetupPrefs {
+    fn default() -> Self {
+        Self {
+            onboarded: false,
+            prompt_updates: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }

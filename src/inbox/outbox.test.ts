@@ -53,6 +53,7 @@ function outcomeFor(decision: Decision): DecideOutcome {
     action: decision.action,
     id: decision.row.id,
     status: 'ok',
+    code: null,
     reason: null,
     message: 'done',
     wrote: true,
@@ -123,7 +124,7 @@ describe('Outbox', () => {
     const { clock, outbox, send, enqueue } = setup();
     const decision = enqueue('archive', 'claude-code:a');
     clock.advance(3_999);
-    expect(outbox.undo()).toBe(decision);
+    expect(outbox.undoBatch()).toEqual([decision]);
     clock.advance(10_000);
     await settle();
     expect(send).toHaveBeenCalledTimes(0);
@@ -134,7 +135,7 @@ describe('Outbox', () => {
     const { outbox, enqueue } = setup();
     const older = enqueue('archive', 'claude-code:a');
     const newer = enqueue('keep', 'claude-code:b');
-    expect(outbox.undo()).toBe(newer);
+    expect(outbox.undoBatch()).toEqual([newer]);
     expect(outbox.getSnapshot().entries.map((entry) => entry.decision)).toEqual([older]);
   });
 
@@ -143,7 +144,7 @@ describe('Outbox', () => {
     enqueue('archive', 'claude-code:a');
     const idle = vi.fn();
     void outbox.whenIdle().then(idle);
-    outbox.undo();
+    outbox.undoBatch();
     await settle();
     expect(idle).toHaveBeenCalledTimes(1);
     expect(clock.timerCount()).toBe(0);
@@ -154,7 +155,7 @@ describe('Outbox', () => {
     enqueue('archive', 'claude-code:a');
     clock.advance(4_000);
     await settle();
-    expect(outbox.undo()).toBeNull();
+    expect(outbox.undoBatch()).toEqual([]);
     expect(outbox.getSnapshot().entries.map((entry) => entry.state)).toEqual(['sending']);
   });
 
@@ -164,14 +165,14 @@ describe('Outbox', () => {
     clock.advance(4_000);
     await settle();
     const newer = enqueue('keep', 'claude-code:b');
-    expect(outbox.undo()).toBe(newer);
+    expect(outbox.undoBatch()).toEqual([newer]);
     expect(outbox.getSnapshot().entries.map((entry) => entry.decision.row.id)).toEqual([
       'claude-code:a',
     ]);
   });
 
-  it('returns null from undo when nothing is unsent', () => {
-    expect(setup().outbox.undo()).toBeNull();
+  it('undoes nothing when nothing is unsent', () => {
+    expect(setup().outbox.undoBatch()).toEqual([]);
   });
 
   it('refuses a second decision for the same row, also while it is sending', async () => {
@@ -391,7 +392,13 @@ describe('Outbox', () => {
 describe('toRequest', () => {
   it('builds the decide request from the row it was enqueued with', () => {
     const row = makeRow({ id: 'claude-code:a', mtime: '2026-10-01T00:00:00+00:00' });
-    const decision: Decision = { ticket: 1, action: 'snooze', row, until: '2026-11-01T09:00:00Z' };
+    const decision: Decision = {
+      ticket: 1,
+      batchId: 1,
+      action: 'snooze',
+      row,
+      until: '2026-11-01T09:00:00Z',
+    };
     expect(toRequest(decision)).toEqual({
       action: 'snooze',
       id: 'claude-code:a',
@@ -399,5 +406,64 @@ describe('toRequest', () => {
       fingerprint: row.file_fingerprint,
       until: '2026-11-01T09:00:00Z',
     });
+  });
+});
+
+describe('Outbox batches', () => {
+  const rows = ['claude-code:a', 'claude-code:b', 'claude-code:c'].map((id) => makeRow({ id }));
+
+  it('enqueues every row of a batch under one batch id and sends each on time', async () => {
+    const { clock, outbox, send } = setup();
+    const result = outbox.enqueueBatch('keep', rows);
+    if (!result.ok) throw new Error('refused');
+    expect(result.decisions.map((d) => [d.row.id, d.batchId])).toEqual([
+      ['claude-code:a', 1],
+      ['claude-code:b', 1],
+      ['claude-code:c', 1],
+    ]);
+    clock.advance(4_000);
+    await settle();
+    expect(send.mock.calls.map(([d]) => d.row.id)).toEqual(['claude-code:a']);
+  });
+
+  it('skips rows that already have an entry and reports them', () => {
+    const { outbox, enqueue } = setup();
+    enqueue('archive', 'claude-code:b');
+    const result = outbox.enqueueBatch('keep', rows);
+    if (!result.ok) throw new Error('refused');
+    expect(result.decisions.map((d) => d.row.id)).toEqual(['claude-code:a', 'claude-code:c']);
+    expect(result.duplicates.map((row) => row.id)).toEqual(['claude-code:b']);
+  });
+
+  it('undoes the unsent members of the newest batch together', async () => {
+    const { clock, outbox, enqueue, sends } = setup();
+    enqueue('archive', 'claude-code:x');
+    outbox.enqueueBatch('keep', rows);
+    expect(outbox.undoBatch().map((d) => d.row.id)).toEqual([
+      'claude-code:a',
+      'claude-code:b',
+      'claude-code:c',
+    ]);
+    expect(outbox.getSnapshot().entries.map((e) => e.decision.row.id)).toEqual(['claude-code:x']);
+    clock.advance(4_000);
+    await settle();
+    expect(sends.map((s) => s.decision.row.id)).toEqual(['claude-code:x']);
+  });
+
+  it('leaves the sending member when undoing a partly sent batch', async () => {
+    const { clock, outbox } = setup();
+    outbox.enqueueBatch('keep', rows);
+    clock.advance(4_000);
+    await settle();
+    expect(outbox.undoBatch().map((d) => d.row.id)).toEqual(['claude-code:b', 'claude-code:c']);
+    expect(outbox.getSnapshot().entries.map((e) => [e.decision.row.id, e.state])).toEqual([
+      ['claude-code:a', 'sending'],
+    ]);
+  });
+
+  it('refuses a batch while closing', () => {
+    const { outbox } = setup();
+    outbox.flush();
+    expect(outbox.enqueueBatch('keep', rows)).toEqual({ ok: false, reason: 'closing' });
   });
 });

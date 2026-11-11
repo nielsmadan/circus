@@ -1,6 +1,9 @@
-use circus_lib::contract::{DecideRequest, DecisionAction, TailsRequest};
+use circus_lib::config::Resolved;
+use circus_lib::contract::{DecideRequest, DecisionAction, HandoffRequest, TailsRequest};
+use circus_lib::contract::{RlSource, ShellProbeState};
 use circus_lib::process::SystemRunner;
 use circus_lib::rl::RlClient;
+use circus_lib::setup;
 use serde_json::Value;
 
 fn sandbox_client() -> (RlClient<SystemRunner>, String) {
@@ -39,6 +42,17 @@ fn text(value: &Value, key: &str) -> String {
 fn rl_json_contract_against_the_sandbox_world() {
     let (rl, world) = sandbox_client();
 
+    let command = shlex::split(&std::env::var("CIRCUS_RL").expect("CIRCUS_RL")).expect("words");
+    let resolved = Resolved {
+        command,
+        source: RlSource::Env,
+        path_env: std::env::var("PATH").ok(),
+        probe: ShellProbeState::Skipped,
+    };
+    let installed = setup::installed_version(&SystemRunner, &resolved).expect("rl --version");
+    let minimum = setup::parse_version(&setup::manifest().minimum).expect("minimum");
+    assert!(installed >= minimum, "{installed:?} is below {minimum:?}");
+
     let first = json(&rl.list().expect("first list"));
     let registry = text(&first, "registry");
     assert!(
@@ -64,6 +78,27 @@ fn rl_json_contract_against_the_sandbox_world() {
             .iter()
             .map(|row| text(row, "id"))
             .collect::<Vec<_>>()
+    );
+
+    let listed = json(&rl.list().expect("list for the home block"));
+    let project_key = text(&listed["home"]["projects"][0], "key");
+    let agent = text(&listed["agents"][0], "source");
+    let handoff = json(
+        &rl.handoff_preview(&HandoffRequest {
+            project_key: project_key.clone(),
+            agent: agent.clone(),
+        })
+        .expect("handoff dry run"),
+    );
+    assert_eq!(handoff["kind"], "handoff", "{handoff}");
+    assert_eq!(
+        handoff["project_key"],
+        Value::String(project_key),
+        "{handoff}"
+    );
+    assert!(
+        matches!(handoff["status"].as_str(), Some("ok" | "refused")),
+        "{handoff}"
     );
 
     let pair: Vec<&Value> = rows.iter().take(2).collect();

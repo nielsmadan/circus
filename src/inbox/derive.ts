@@ -1,5 +1,6 @@
 import type { AppInfo, DecisionAction, ListResponse, SessionRow } from '../api/types';
 import type { Applied } from './applied';
+import { presenceUnknownText, stillRunningText } from './messages';
 import type { OutboxEntry } from './outbox';
 
 export type Split = 'recent' | 'woke' | 'all';
@@ -9,6 +10,7 @@ export interface ProjectCount {
   readonly key: string;
   readonly label: string;
   readonly pending: number;
+  readonly oldestMtime: string;
 }
 
 export interface RowIndex {
@@ -141,11 +143,21 @@ export function filterByProject(
   return rows.filter((row) => row.project_key === projectKey);
 }
 
+export function narrowRows(
+  rows: readonly SessionRow[],
+  projectKey: string | null,
+  query: string,
+  index: RowIndex,
+): SessionRow[] {
+  return searchRows(filterByProject(rows, projectKey), query, index);
+}
+
 interface ProjectGroup {
   readonly key: string;
   label: string;
   oldestMs: number;
   oldestId: string;
+  oldestMtime: string;
   pending: number;
 }
 
@@ -160,6 +172,7 @@ export function projectCounts(rows: readonly SessionRow[], index: RowIndex): Pro
         label: row.project_label,
         oldestMs: ms,
         oldestId: row.id,
+        oldestMtime: row.mtime,
         pending: 1,
       });
       continue;
@@ -169,12 +182,18 @@ export function projectCounts(rows: readonly SessionRow[], index: RowIndex): Pro
       group.label = row.project_label;
       group.oldestMs = ms;
       group.oldestId = row.id;
+      group.oldestMtime = row.mtime;
     }
   }
   return [...groups.values()]
-    .map(({ key, label, pending }) => ({ key, label, pending, sortLabel: label.toLowerCase() }))
-    .sort((a, b) => compareStrings(a.sortLabel, b.sortLabel) || compareStrings(a.key, b.key))
-    .map(({ key, label, pending }) => ({ key, label, pending }));
+    .map((group) => ({ ...group, sortLabel: group.label.toLowerCase() }))
+    .sort(
+      (a, b) =>
+        a.oldestMs - b.oldestMs ||
+        compareStrings(a.sortLabel, b.sortLabel) ||
+        compareStrings(a.key, b.key),
+    )
+    .map(({ key, label, pending, oldestMtime }) => ({ key, label, pending, oldestMtime }));
 }
 
 export function searchRows(
@@ -215,21 +234,19 @@ export function nextSelection(
 
 const GUARDED_ACTIONS: ReadonlySet<DecisionAction> = new Set(['archive', 'delete', 'harvest']);
 
-// a non-null block fails the same transcript check for delete, so ringleader refuses it too
-function lifecycleText(block: string, action: DecisionAction): string {
-  return action === 'delete' && block.startsWith('cannot archive ')
-    ? `cannot delete ${block.slice('cannot archive '.length)}`
+const ARCHIVE_BLOCK = 'cannot archive ';
+
+// the block is computed for archive; the same transcript check refuses every guarded action
+export function lifecycleText(block: string, action: DecisionAction): string {
+  return block.startsWith(ARCHIVE_BLOCK)
+    ? `cannot ${action} ${block.slice(ARCHIVE_BLOCK.length)}`
     : block;
 }
 
 export function clientRefusal(action: DecisionAction, row: SessionRow): string | null {
   if (!GUARDED_ACTIONS.has(action)) return null;
-  if (row.running === true) {
-    return `${row.label} is running — finish it from inside with the ringleader-finish skill`;
-  }
-  if (row.running === null) {
-    return `Can't tell whether ${row.label} is running — archive, delete and harvest are refused until presence works`;
-  }
+  if (row.running === true) return stillRunningText(row.label);
+  if (row.running === null) return presenceUnknownText(row.label);
   if (row.lifecycle_block) return lifecycleText(row.lifecycle_block, action);
   if (row.file_fingerprint === null) {
     return `${row.label} has no fingerprint — rescan first (⌘K › Rescan sessions)`;

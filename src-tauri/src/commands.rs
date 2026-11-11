@@ -9,12 +9,15 @@ use crate::cache;
 use crate::close::CloseGate;
 use crate::config::{self, Resolved};
 use crate::contract::{
-    AppInfo, DecideRequest, ResumeLaunch, ResumeRequest, TailsRequest, TerminalKind,
+    AppInfo, DecideRequest, HandoffRequest, ResumeRequest, TailsRequest, TerminalKind,
+    TerminalLaunch,
 };
 use crate::error::{CircusError, ErrorKind};
 use crate::process::{ProcessRunner, SystemRunner};
 use crate::resume;
 use crate::rl::RlClient;
+
+pub mod setup;
 
 pub const CLOSE_REQUESTED_EVENT: &str = "circus://close-requested";
 
@@ -119,6 +122,16 @@ pub async fn rl_decide(
 }
 
 #[tauri::command]
+pub async fn rl_handoff_preview(
+    state: State<'_, AppState>,
+    request: HandoffRequest,
+) -> Result<Response, CircusError> {
+    blocking(with_client(&state, move |rl| rl.handoff_preview(&request)))
+        .await
+        .map(Response::new)
+}
+
+#[tauri::command]
 pub async fn cached_list(state: State<'_, AppState>) -> Result<Response, CircusError> {
     let cache_file = state.list_cache.clone();
     blocking(move || Ok(cache::read_cache(cache_file.as_deref())))
@@ -145,11 +158,17 @@ pub async fn app_info(state: State<'_, AppState>) -> Result<AppInfo, CircusError
     })
 }
 
-#[tauri::command]
-pub async fn resume_session(
-    state: State<'_, AppState>,
-    request: ResumeRequest,
-) -> Result<ResumeLaunch, CircusError> {
+async fn in_terminal<F>(state: &AppState, launch: F) -> Result<TerminalLaunch, CircusError>
+where
+    F: FnOnce(
+            &resume::WithPath<'_, SystemRunner>,
+            &[String],
+            Option<&[String]>,
+            bool,
+        ) -> Result<TerminalLaunch, CircusError>
+        + Send
+        + 'static,
+{
     let resolved = std::sync::Arc::clone(&state.resolved);
     let terminal_command = state.settings.terminal_command.clone();
     let dry_run = state.resume_dry_run;
@@ -159,13 +178,34 @@ pub async fn resume_session(
             inner: &SystemRunner,
             path_env: resolved.path_env.clone(),
         };
-        resume::launch(
+        launch(
             &runner,
             &resolved.command,
-            &request.id,
             terminal_command.as_deref(),
             dry_run,
         )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn resume_session(
+    state: State<'_, AppState>,
+    request: ResumeRequest,
+) -> Result<TerminalLaunch, CircusError> {
+    in_terminal(&state, move |runner, rl, terminal, dry_run| {
+        resume::launch(runner, rl, &request.id, terminal, dry_run)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn launch_handoff(
+    state: State<'_, AppState>,
+    request: HandoffRequest,
+) -> Result<TerminalLaunch, CircusError> {
+    in_terminal(&state, move |runner, rl, terminal, dry_run| {
+        resume::launch_handoff(runner, rl, &request, terminal, dry_run)
     })
     .await
 }

@@ -64,6 +64,14 @@ pub fn resolve_program(program: &str, path_env: Option<&str>) -> Option<PathBuf>
     if program.is_empty() {
         return None;
     }
+    find_on_path(program, path_env, &is_executable)
+}
+
+pub fn find_on_path(
+    program: &str,
+    path_env: Option<&str>,
+    is_executable: &dyn Fn(&Path) -> bool,
+) -> Option<PathBuf> {
     path_env?
         .split(':')
         .filter(|dir| !dir.is_empty())

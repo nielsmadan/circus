@@ -8,9 +8,13 @@ import {
   type CircusError,
   type DecideOutcome,
   type DecideRequest,
+  type HandoffRequest,
+  type HandoffResponse,
   type ListResponse,
-  type ResumeLaunch,
+  type SetupPrefs,
+  type SetupStatus,
   type TailsResponse,
+  type TerminalLaunch,
 } from './types';
 
 const CLOSE_REQUESTED_EVENT = 'circus://close-requested';
@@ -28,13 +32,13 @@ function isArrayBuffer(value: unknown): value is ArrayBuffer {
 
 export function decodeDocument(raw: unknown): unknown {
   if (!isArrayBuffer(raw) && !ArrayBuffer.isView(raw)) {
-    throw circusError('bad_output', 'expected raw bytes from rl');
+    throw circusError('bad_output', 'The response was not raw bytes');
   }
   if (raw.byteLength === 0) return null;
   try {
     return JSON.parse(TEXT_DECODER.decode(raw)) as unknown;
   } catch (error) {
-    throw circusError('bad_output', `rl printed something that is not JSON: ${String(error)}`);
+    throw circusError('bad_output', `The response was not JSON: ${String(error)}`);
   }
 }
 
@@ -44,8 +48,17 @@ export interface CircusApi {
   tails(ids: readonly string[]): Promise<TailsResponse>;
   cachedList(): Promise<ListResponse | null>;
   decide(request: DecideRequest): Promise<DecideOutcome>;
-  resume(id: string): Promise<ResumeLaunch>;
+  resume(id: string): Promise<TerminalLaunch>;
+  previewHandoff(request: HandoffRequest): Promise<HandoffResponse>;
+  launchHandoff(request: HandoffRequest): Promise<TerminalLaunch>;
   appInfo(): Promise<AppInfo>;
+  setupStatus(): Promise<SetupStatus>;
+  installRingleader(): Promise<SetupStatus>;
+  installUv(): Promise<SetupStatus>;
+  setupPrefs(): Promise<SetupPrefs>;
+  saveSetupPrefs(prefs: SetupPrefs): Promise<void>;
+  installPresence(): Promise<void>;
+  installAgentExtras(): Promise<void>;
   setPending(count: number): Promise<void>;
   closeAck(): Promise<void>;
   closeCancel(): Promise<void>;
@@ -105,8 +118,24 @@ export function createCircusApi(
     },
     cachedList: async () => (await documentOrNull('cached_list', {})) as ListResponse | null,
     decide: async (request) => (await document('rl_decide', { request })) as DecideOutcome,
-    resume: async (id) => (await call('resume_session', { request: { id } })) as ResumeLaunch,
+    resume: async (id) => (await call('resume_session', { request: { id } })) as TerminalLaunch,
+    previewHandoff: async (request) =>
+      (await document('rl_handoff_preview', { request })) as HandoffResponse,
+    launchHandoff: async (request) => (await call('launch_handoff', { request })) as TerminalLaunch,
     appInfo: async () => (await call('app_info', {})) as AppInfo,
+    setupStatus: async () => (await call('setup_status', {})) as SetupStatus,
+    installRingleader: async () => (await call('install_ringleader', {})) as SetupStatus,
+    installUv: async () => (await call('install_uv', {})) as SetupStatus,
+    setupPrefs: async () => (await call('setup_prefs', {})) as SetupPrefs,
+    saveSetupPrefs: async (prefs) => {
+      await call('save_setup_prefs', { prefs });
+    },
+    installPresence: async () => {
+      await call('install_presence', {});
+    },
+    installAgentExtras: async () => {
+      await call('install_agent_extras', {});
+    },
     setPending: async (count) => {
       await call('set_pending', { count });
     },

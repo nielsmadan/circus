@@ -43,7 +43,7 @@ describe('App shell', () => {
   it('lists the tabs in order with Inbox selected and visible', () => {
     renderApp();
     const tabs = within(screen.getByRole('tablist', { name: 'Sections' })).getAllByRole('tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['Enrich', 'Triage', 'Inbox', 'Harvest']);
+    expect(tabs.map((t) => t.textContent)).toEqual(['Inbox', 'Archive', 'Harvests']);
     expect(screen.getByRole('tab', { name: 'Inbox' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tabpanel', { name: 'Inbox' })).toBeVisible();
   });
@@ -52,16 +52,16 @@ describe('App shell', () => {
     renderApp();
     const selectedStyle = 'aria-selected:bg-blue-500/15';
     expect(screen.getByRole('tab', { name: 'Inbox' })).toHaveClass(selectedStyle);
-    await userEvent.click(screen.getByRole('tab', { name: 'Enrich' }));
-    expect(screen.getByRole('tab', { name: 'Enrich' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Enrich' })).toHaveClass(selectedStyle);
+    await userEvent.click(screen.getByRole('tab', { name: 'Archive' }));
+    expect(screen.getByRole('tab', { name: 'Archive' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Archive' })).toHaveClass(selectedStyle);
   });
 
   it('switches to a stub while keeping the Inbox panel mounted', async () => {
     renderApp();
-    await userEvent.click(screen.getByRole('tab', { name: 'Enrich' }));
-    const enrich = screen.getByRole('tabpanel', { name: 'Enrich' });
-    expect(within(enrich).getByText('Not built yet')).toBeVisible();
+    await userEvent.click(screen.getByRole('tab', { name: 'Archive' }));
+    const archive = screen.getByRole('tabpanel', { name: 'Archive' });
+    expect(within(archive).getByText('Not built yet')).toBeVisible();
     const inbox = screen
       .getAllByRole('tabpanel', { hidden: true })
       .find((p) => p.id === 'panel-Inbox');
@@ -75,19 +75,21 @@ describe('App shell', () => {
     fireEvent.keyDown(document.body, { key: '/', code: 'Slash' });
     expect(screen.getByRole('searchbox', { name: 'Search sessions' })).toHaveFocus();
     await userEvent.tab({ shift: true });
-    const harvest = screen.getByRole('tab', { name: 'Harvest' });
+    const harvest = screen.getByRole('tab', { name: 'Harvests' });
     expect(harvest).toHaveFocus();
     await userEvent.keyboard('{Enter}');
     expect(harvest).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tabpanel', { name: 'Harvest' })).toBeVisible();
+    expect(screen.getByRole('tabpanel', { name: 'Harvests' })).toBeVisible();
     expect(api.count('resume')).toBe(0);
   });
 
-  it('switches tabs with ⌘2 and ⌘3', async () => {
+  it('switches tabs with ⌘2, ⌘3 and ⌘1', async () => {
     renderApp();
     await userEvent.keyboard('{Meta>}2{/Meta}');
-    expect(screen.getByRole('tab', { name: 'Triage' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Archive' })).toHaveAttribute('aria-selected', 'true');
     await userEvent.keyboard('{Meta>}3{/Meta}');
+    expect(screen.getByRole('tab', { name: 'Harvests' })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.keyboard('{Meta>}1{/Meta}');
     expect(screen.getByRole('tab', { name: 'Inbox' })).toHaveAttribute('aria-selected', 'true');
   });
 

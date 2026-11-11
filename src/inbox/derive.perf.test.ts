@@ -12,7 +12,7 @@ describe('derive performance', () => {
     const row = pick(i + 1);
     if (row === undefined) throw new Error('no row');
     return {
-      decision: { ticket: i + 1, action: 'archive', row, until: null },
+      decision: { ticket: i + 1, batchId: i + 1, action: 'archive', row, until: null },
       state: 'pending',
       sendAt: 0,
     };
