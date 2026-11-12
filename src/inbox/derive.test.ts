@@ -5,7 +5,7 @@ import type { OutboxEntry } from './outbox';
 import {
   clientRefusal,
   decisionGuard,
-  filterByProject,
+  filterByScope,
   hiddenIds,
   indexRows,
   narrowRows,
@@ -18,6 +18,7 @@ import {
   splitRows,
   visibleSessions,
 } from './derive';
+import type { Scope } from './scope';
 
 function pendingEntry(row: SessionRow): OutboxEntry {
   return {
@@ -40,6 +41,7 @@ const appInfo: AppInfo = {
   resume_dry_run: false,
   terminal: 'iterm2',
   settings_path: '/u/settings.json',
+  home_dir: '/u',
 };
 
 const a = makeRow({
@@ -149,17 +151,32 @@ describe('splitRows and splitCounts', () => {
   });
 });
 
-describe('filterByProject and projectCounts', () => {
-  it('returns the input for null and filters by key otherwise', () => {
-    expect(filterByProject(rows, null)).toBe(rows);
-    expect(ids(filterByProject(rows, '/u/a'))).toEqual([d.id, b.id]);
+const repo = (key: string): Scope => ({ kind: 'repo', key, label: key });
+
+describe('filterByScope and projectCounts', () => {
+  const index = indexRows(rows);
+
+  it('returns the input for null and filters by project key for a repo', () => {
+    expect(filterByScope(rows, null, index)).toBe(rows);
+    expect(ids(filterByScope(rows, repo('/u/a'), index))).toEqual([d.id, b.id]);
   });
 
-  it('narrows to a project and a query together', () => {
-    const index = indexRows(rows);
-    expect(ids(narrowRows(rows, '/u/a', '', index))).toEqual([d.id, b.id]);
-    expect(ids(narrowRows(rows, '/u/b', 'newer', index))).toEqual([c.id]);
-    expect(narrowRows(rows, '/u/a', 'newer', index)).toEqual([]);
+  it('filters a period by last activity, start inclusive and end exclusive', () => {
+    const period: Scope = {
+      kind: 'period',
+      key: 'day:2026-10-14',
+      label: 'Wed 14 Oct',
+      period: 'day',
+      start: Date.parse('2026-10-12T00:00:00Z'),
+      end: Date.parse('2026-10-14T00:00:00Z'),
+    };
+    expect(ids(filterByScope(rows, period, index))).toEqual([b.id]);
+  });
+
+  it('narrows to a scope and a query together', () => {
+    expect(ids(narrowRows(rows, repo('/u/a'), '', index))).toEqual([d.id, b.id]);
+    expect(ids(narrowRows(rows, repo('/u/b'), 'newer', index))).toEqual([c.id]);
+    expect(narrowRows(rows, repo('/u/a'), 'newer', index)).toEqual([]);
     expect(narrowRows(rows, null, '', index)).toBe(rows);
   });
 

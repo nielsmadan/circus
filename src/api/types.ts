@@ -394,6 +394,7 @@ export interface AppInfo {
   resume_dry_run: boolean;
   terminal: TerminalKind;
   settings_path: string;
+  home_dir: string;
 }
 
 const ERROR_KINDS: ReadonlySet<string> = new Set<CircusErrorKind>([

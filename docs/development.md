@@ -29,6 +29,8 @@ The world is rebuilt on every launch, so a sandbox launch starts without a list 
 
 The fake decides as the guarded `rl session` verbs do, so QA in the harness sees real outcomes: archive, delete and harvest are refused without a five-field numeric fingerprint (the synthetic rows carry real-shaped ones), then for a lifecycle block (`cannot <action> …`), a session that left the registry or a changed `mtime`, then for a running or presence-unknown session, in that order; keep and keep going on a missing session are `failed`; a snooze without `until` is rejected as `invalid_argument` the way Rust rejects it, and an unparsable, offset-less or past `until` is refused.
 
+Home is `/u`, and the synthetic projects use five folder layouts so every sidebar view has something to show: repos cloned twice (`/u/wrksp/proj-NN/dev1`, `dev2`), packages of one monorepo (`/u/wrksp/mono/packages/proj-NN`), plain local repos (`/u/work/proj-NN`), folders outside git (`/u/notes/proj-NN`) and repos outside home (`/opt/src/proj-NN`); about one session in a hundred has no folder.
+
 - `VITE_FAKE_ROWS` — synthetic row count (default 2000)
 - `VITE_FAKE_LATENCY_MS` — simulated latency per call (default 150)
 - `VITE_FAKE_CACHE=0` — start without a cached list (default: a cache is available, so the first paint comes from it)
@@ -39,7 +41,8 @@ Example: `VITE_FAKE_ROWS=5000 VITE_FAKE_LATENCY_MS=0 pnpm dev:fake`.
 
 QA each Inbox behavior in the harness:
 
-- keys `j`/`k`/arrows, `/` search, Tab and ⇧Tab splits, project sidebar, `Esc` back;
+- keys `j`/`k`/arrows, `/` search, Tab and ⇧Tab splits, `Esc` back;
+- the sidebar's Repos, Folders, Tree and Dates tabs (selection per tab, an emptied selection offering the next entry), dragging, arrow-stepping and double-clicking its divider;
 - `e`, ⇧E, `#`, `h` (dialog: typed text, picker, presets, ⌘Enter), `s`, `r`, each followed by `z` within the window, and again after the window to see the row stay hidden;
 - `o` / Enter: dry-run toast;
 - `x` marks, ⇧8 marks all; a decision on several marks: confirm dialog for archive/delete, one batch toast, `z` undoes the unsent members;

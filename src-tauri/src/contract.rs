@@ -103,6 +103,7 @@ pub struct AppInfo {
     pub resume_dry_run: bool,
     pub terminal: TerminalKind,
     pub settings_path: String,
+    pub home_dir: String,
 }
 
 #[derive(Serialize, Clone, Copy, Debug)]

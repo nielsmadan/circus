@@ -4,3 +4,8 @@
   color-scheme: light dark;
   @apply bg-white dark:bg-neutral-950;
 }
+
+body.circus-resizing {
+  cursor: col-resize;
+  user-select: none;
+}

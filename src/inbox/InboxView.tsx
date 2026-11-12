@@ -20,13 +20,14 @@ import {
   indexRows,
   narrowRows,
   nextSelection,
+  parseMtime,
   positions,
   projectCounts,
   splitCounts,
   splitRows,
-  filterByProject,
+  filterByScope,
+  mtimeOf,
   SPLITS,
-  type ProjectCount,
   type Split,
 } from './derive';
 import { InFlight, WakingSoon } from './HomeLists';
@@ -45,7 +46,6 @@ import {
 } from './messages';
 import { NextSteps, type StepContext } from './NextSteps';
 import { clearSelect, hasSelectMark, markPaint, markSelect } from './perfMarks';
-import { ProjectSidebar } from './ProjectSidebar';
 import { ReadingPane } from './ReadingPane';
 import { effectiveViewport, ROW_HEIGHT, scrollToShow } from './rowWindow';
 import { SearchBox } from './SearchBox';
@@ -56,8 +56,16 @@ import type { InboxController } from './useInbox';
 import { useMarks } from './useMarks';
 import { usePresenceInstall } from './usePresenceInstall';
 import { useTails } from './useTails';
-import { actionTargets, triageChoice } from './targets';
+import { actionTargets, scopeProject, triageChoice } from './targets';
 import { useTriageHandoff } from './useTriageHandoff';
+import { inScope, scopeNoun, sameScope, type Scope, type SidebarView } from './scope';
+import { Sidebar } from './Sidebar';
+import { resolvePeriod, type SidebarEntry } from './sidebarGroups';
+import { sidebarColumns } from './sidebarWidth';
+import { Splitter } from './Splitter';
+import { useSidebarContent } from './useSidebarContent';
+import { useSidebarScope } from './useSidebarScope';
+import { useSidebarWidth } from './useSidebarWidth';
 
 export interface InboxViewProps {
   readonly controller: InboxController;
@@ -77,6 +85,12 @@ interface PendingConfirm {
 }
 
 const NO_ROWS: readonly SessionRow[] = Object.freeze([]);
+const SIDEBAR_ACTION_VIEWS = {
+  sidebarRepos: 'repos',
+  sidebarFolders: 'folders',
+  sidebarTree: 'tree',
+  sidebarDates: 'dates',
+} as const satisfies Partial<Record<InboxListAction, SidebarView>>;
 const INITIAL_VIEW: View = Object.freeze({ selectedId: null, scrollTop: 0 });
 const currentTime = () => new Date();
 
@@ -93,14 +107,19 @@ function emptyText(
   split: Split,
   recentDays: number,
   query: string,
-  projectFiltered: boolean,
-  following: ProjectCount | null,
+  scope: Scope | null,
+  following: SidebarEntry | null,
+  remaining: number,
 ): string {
   if (query.trim() !== '') return `No sessions match “${query}”`;
-  if (projectFiltered) {
-    return following === null
-      ? 'This project is done — all caught up. Esc shows all projects'
-      : `This project is done. Next: ${following.label} (${following.pending} waiting) — Enter`;
+  if (scope !== null) {
+    const noun = scopeNoun(scope);
+    if (following !== null) {
+      return `This ${noun} is done. Next: ${following.scope.label} (${following.count} waiting) — Enter`;
+    }
+    return remaining > 0
+      ? `This ${noun} is done. Esc shows all ${noun}s`
+      : `This ${noun} is done — all caught up. Esc shows all ${noun}s`;
   }
   switch (split) {
     case 'recent':
@@ -154,7 +173,9 @@ export function InboxView({
   onOpenHarvests,
 }: InboxViewProps): ReactElement {
   const [split, setSplit] = useState<Split>('recent');
-  const [projectKey, setProjectKey] = useState<string | null>(null);
+  const sidebar = useSidebarScope();
+  const [sidebarWidth, setSidebarWidth] = useSidebarWidth();
+  const gridRef = useRef<HTMLDivElement | null>(null);
   const [query, setQuery] = useState('');
   const [view, setView] = useState<View>(INITIAL_VIEW);
   const [viewport, setViewport] = useState(0);
@@ -164,18 +185,40 @@ export function InboxView({
   const { list, rows, notify, rescan } = controller;
   const index = useMemo(() => indexRows(list?.sessions ?? NO_ROWS), [list]);
   const inSplit = useMemo(() => splitRows(rows, split, index), [rows, split, index]);
+  const homeDir = controller.info?.home_dir ?? null;
+  const projects = useMemo(() => projectCounts(inSplit, index), [inSplit, index]);
+  const generatedAt = list?.generated_at ?? null;
+  const nowMs = useMemo(
+    () => (generatedAt === null ? null : parseMtime(generatedAt)),
+    [generatedAt],
+  );
+  const { content, scope } = useSidebarContent(
+    sidebar.view,
+    { projects, rows: inSplit, index, home: homeDir, nowMs },
+    sidebar.selected,
+  );
   const shown = useMemo(
-    () => narrowRows(inSplit, projectKey, query, index),
-    [inSplit, projectKey, query, index],
+    () => narrowRows(inSplit, scope, query, index),
+    [inSplit, scope, query, index],
   );
   const shownPositions = useMemo(() => positions(shown), [shown]);
   const marks = useMarks(shown, shownPositions);
   const { markedRows } = marks;
-  const counts = useMemo(() => splitCounts(filterByProject(rows, projectKey)), [rows, projectKey]);
-  const projects = useMemo(() => projectCounts(inSplit, index), [inSplit, index]);
+  const counts = useMemo(
+    () => splitCounts(filterByScope(rows, scope, index)),
+    [rows, scope, index],
+  );
   const following = useMemo(
-    () => (shown.length === 0 ? (projects.find((p) => p.key !== projectKey) ?? null) : null),
-    [shown, projects, projectKey],
+    () =>
+      shown.length === 0 && content.kind === 'list'
+        ? (content.entries.find((entry) => !sameScope(entry.scope, scope)) ?? null)
+        : null,
+    [shown, content, scope],
+  );
+  const { select: selectScope, clear: clearScope } = sidebar;
+  const onSidebarScope = useCallback(
+    (next: Scope | null) => (next === null ? clearScope() : selectScope(next)),
+    [selectScope, clearScope],
   );
   const byId = useMemo(() => rowsById(list), [list]);
   const home = list?.home ?? null;
@@ -251,23 +294,28 @@ export function InboxView({
     setViewport(height);
   }, []);
   const clearMarks = marks.clear;
+  const updateScopes = sidebar.updateAll;
   const changeSplit = useCallback(
     (next: Split) => {
       if (next === split) return;
       setSplit(next);
       setView(INITIAL_VIEW);
       clearMarks();
-      setProjectKey((key) =>
-        key !== null && filterByProject(splitRows(rows, next, index), key).length === 0
-          ? null
-          : key,
-      );
+      const nextRows = splitRows(rows, next, index);
+      updateScopes((current) => {
+        const live = current === null ? null : resolvePeriod(current, nowMs);
+        return live !== null && nextRows.some((row) => inScope(row, live, mtimeOf(row, index)))
+          ? current
+          : null;
+      });
     },
-    [split, rows, index, clearMarks],
+    [split, rows, index, nowMs, clearMarks, updateScopes],
   );
   const inCurrentView = (row: SessionRow): boolean =>
-    narrowRows(splitRows([row], split, index), projectKey, query, index).length > 0;
-  const onProject = useCallback((key: string | null) => setProjectKey(key), []);
+    narrowRows(splitRows([row], split, index), scope, query, index).length > 0;
+  const onPreviewWidth = useCallback((width: number) => {
+    gridRef.current?.style.setProperty('grid-template-columns', sidebarColumns(width));
+  }, []);
   const onSearchDone = useCallback(() => listRef.current?.focus(), []);
 
   const selectedId = view.selectedId;
@@ -320,9 +368,9 @@ export function InboxView({
   });
   const onResumeRow = useCallback((row: SessionRow) => resumeRef.current(row), []);
 
-  const goToProject = (key: string) => {
+  const goTo = (target: Scope) => {
     changeSplit('all');
-    setProjectKey(key);
+    sidebar.select(target);
     setView(INITIAL_VIEW);
   };
 
@@ -330,11 +378,15 @@ export function InboxView({
     switch (step.kind) {
       case 'woke':
       case 'recent':
-        setProjectKey(null);
+        sidebar.clear();
         changeSplit(step.kind);
         return;
       case 'project':
-        goToProject(step.project_key);
+        goTo({
+          kind: 'repo',
+          key: step.project_key,
+          label: allProjects.get(step.project_key)?.label ?? step.project_key,
+        });
         return;
       case 'publish':
         onOpenHarvests();
@@ -363,7 +415,7 @@ export function InboxView({
       return;
     }
     if (query !== '') setQuery('');
-    else if (projectKey !== null) setProjectKey(null);
+    else if (scope !== null) sidebar.clear();
   };
 
   const unlessBlocked = (open: () => void) => {
@@ -387,7 +439,7 @@ export function InboxView({
   const resumeTargets = (targets: readonly SessionRow[]) => {
     const [only, ...others] = targets;
     if (only === undefined) {
-      if (following !== null && projectKey !== null) goToProject(following.key);
+      if (following !== null && scope !== null) goTo(following.scope);
       return;
     }
     if (others.length > 0) notify(oneResumeToast());
@@ -395,9 +447,7 @@ export function InboxView({
   };
 
   const triageTargets = (targets: readonly SessionRow[]) => {
-    const label =
-      projectKey === null ? null : (projects.find((p) => p.key === projectKey)?.label ?? null);
-    const choice = triageChoice(projectKey, label, targets);
+    const choice = triageChoice(scopeProject(scope, filterByScope(inSplit, scope, index)), targets);
     if (choice.kind === 'several') notify(oneProjectToast());
     else if (choice.kind === 'target') handoff.triage(choice.target);
   };
@@ -429,6 +479,12 @@ export function InboxView({
         return;
       case 'rescan':
         controller.rescan();
+        return;
+      case 'sidebarRepos':
+      case 'sidebarFolders':
+      case 'sidebarTree':
+      case 'sidebarDates':
+        sidebar.showView(SIDEBAR_ACTION_VIEWS[action]);
         return;
       case 'markAll':
         marks.toggleAll(shownRef.current);
@@ -491,16 +547,27 @@ export function InboxView({
         onRetry={controller.refresh}
       />
       {stepContext !== null && <NextSteps context={stepContext} onStep={onStepStable} />}
-      <div className="grid min-h-0 flex-1 grid-cols-[13rem_minmax(0,1fr)_minmax(0,1.1fr)]">
-        <div className="h-full min-h-0 overflow-y-auto p-2">
-          <ProjectSidebar
-            projects={projects}
-            total={inSplit.length}
-            projectKey={projectKey}
-            onProject={onProject}
-          />
-          <InFlight rows={inFlight} onResume={onResumeRow} />
-          <WakingSoon rows={wakingSoon} now={list?.generated_at ?? ''} />
+      <div
+        ref={gridRef}
+        className="grid min-h-0 flex-1"
+        style={{ gridTemplateColumns: sidebarColumns(sidebarWidth) }}
+      >
+        <div className="relative min-h-0">
+          <div className="h-full min-h-0 overflow-y-auto p-2">
+            <Sidebar
+              view={sidebar.view}
+              onView={sidebar.showView}
+              total={inSplit.length}
+              scope={scope}
+              onScope={onSidebarScope}
+              content={content}
+              treeChoices={sidebar.treeChoices}
+              onTreeOpen={sidebar.setTreeOpen}
+            />
+            <InFlight rows={inFlight} onResume={onResumeRow} />
+            <WakingSoon rows={wakingSoon} now={list?.generated_at ?? ''} />
+          </div>
+          <Splitter width={sidebarWidth} onPreview={onPreviewWidth} onCommit={setSidebarWidth} />
         </div>
         <div className="min-h-0 border-x border-neutral-200 dark:border-neutral-800">
           {list === null ? (
@@ -518,7 +585,7 @@ export function InboxView({
               onResize={onResize}
               onSelect={onSelect}
               listRef={listRef}
-              empty={emptyText(split, list.recent_days, query, projectKey !== null, following)}
+              empty={emptyText(split, list.recent_days, query, scope, following, inSplit.length)}
             />
           )}
         </div>

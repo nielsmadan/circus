@@ -6,7 +6,7 @@ The app talks to ringleader only by spawning `rl inbox --json [--scan]`, `rl dat
 
 ## Layout
 
-- `src/` — React 19 + TypeScript frontend. `api/` (typed Tauri client, the only typed consumer of `rl` responses), `inbox/` (controller, outbox, batches, derive, views and their hooks), `setup/` (onboarding and the update banner), `snooze/`, `palette/`, `shortcuts/`, `dev/` (in-memory fake API for `pnpm dev:fake`, which mirrors the guarded `rl session` refusals and their order), `test/` (fixtures and golden copies).
+- `src/` — React 19 + TypeScript frontend. `api/` (typed Tauri client, the only typed consumer of `rl` responses), `inbox/` (controller, outbox, batches, derive, the sidebar's groupings in `sidebarGroups.ts`, views and their hooks), `setup/` (onboarding and the update banner), `snooze/`, `palette/`, `shortcuts/`, `dev/` (in-memory fake API for `pnpm dev:fake`, which mirrors the guarded `rl session` refusals and their order), `test/` (fixtures and golden copies).
 - `src-tauri/` — Rust: `rl.rs` (typed requests, raw-bytes responses), `process.rs` (process groups, deadlines), `config.rs` (`rl` resolution, settings), `resume.rs`, `setup.rs` (manifest, install steps, `setup.json`), `close.rs` (close gate), `cache.rs` (list cache), `commands.rs` (and `commands/setup.rs`), `lib.rs` (menu, window events).
 - `scripts/` — `sandbox-env.sh` (builds the synthetic world and exports its environment) and its test; `fetch-ringleader.sh` (stage the pinned release), `stage-ringleader.sh` (release-shaped assets from a checkout), `ringleader-venv.sh` (the venv both use).
 - `Justfile` — every command below.

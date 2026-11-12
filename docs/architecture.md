@@ -63,31 +63,32 @@ The Quit item is custom because the predefined one bypasses the gate. Dock › Q
 
 `@shortcutkit/core` provides contexts and a registry (`src/shortcuts/contexts.ts`, in-memory store, no rebinding UI). Reading-pane buttons, the palette and the toast Undo button call `registry.dispatch`, so mouse and keys share one path (the toast falls back to `controller.undo()` while another tab hides the Inbox). `@shortcutkit/react` supplies the provider and hooks; its provider attaches `@shortcutkit/dom` input listeners. Matching runs during capture, before component key handlers; bare editing/navigation keys yield to text inputs, and bare Enter/Space yield to native buttons. Cmd+K is suppressed while the snooze dialog, agent picker or confirm dialog is active so palette commands cannot reach them.
 
-| Context          | Action                              | Default         |
-| ---------------- | ----------------------------------- | --------------- |
-| `app`            | Go to Inbox / Archive / Harvests    | ⌘1 / ⌘2 / ⌘3    |
-| `app`            | Command palette                     | ⌘K              |
-| `inbox.list`     | Next / previous session             | `j`, ↓ / `k`, ↑ |
-| `inbox.list`     | Harvest, then archive               | `e`             |
-| `inbox.list`     | Archive without harvesting          | ⇧E              |
-| `inbox.list`     | Delete                              | ⇧3 (#)          |
-| `inbox.list`     | Snooze…                             | `h`             |
-| `inbox.list`     | Keep long-term                      | `s`             |
-| `inbox.list`     | Keep going (mark reviewed)          | `r`             |
-| `inbox.list`     | Resume in terminal                  | `o`, Enter      |
-| `inbox.list`     | Undo                                | `z`             |
-| `inbox.list`     | Mark or unmark / mark or unmark all | `x` / ⇧8 (*)    |
-| `inbox.list`     | Triage the project with an agent    | `t`             |
-| `inbox.list`     | Search                              | `/`             |
-| `inbox.list`     | Back                                | Esc             |
-| `inbox.list`     | Next / previous split               | Tab / ⇧Tab      |
-| `inbox.list`     | Rescan sessions                     | none (palette)  |
-| `snooze.dialog`  | Close / Snooze                      | Esc / ⌘Enter    |
-| `agent.picker`   | Close                               | Esc             |
-| `confirm.dialog` | Cancel                              | Esc             |
-| `palette`        | Close palette                       | Esc, ⌘K         |
+| Context          | Action                                                 | Default         |
+| ---------------- | ------------------------------------------------------ | --------------- |
+| `app`            | Go to Inbox / Archive / Harvests                       | ⌘1 / ⌘2 / ⌘3    |
+| `app`            | Command palette                                        | ⌘K              |
+| `inbox.list`     | Next / previous session                                | `j`, ↓ / `k`, ↑ |
+| `inbox.list`     | Harvest, then archive                                  | `e`             |
+| `inbox.list`     | Archive without harvesting                             | ⇧E              |
+| `inbox.list`     | Delete                                                 | ⇧3 (#)          |
+| `inbox.list`     | Snooze…                                                | `h`             |
+| `inbox.list`     | Keep long-term                                         | `s`             |
+| `inbox.list`     | Keep going (mark reviewed)                             | `r`             |
+| `inbox.list`     | Resume in terminal                                     | `o`, Enter      |
+| `inbox.list`     | Undo                                                   | `z`             |
+| `inbox.list`     | Mark or unmark / mark or unmark all                    | `x` / ⇧8 (*)    |
+| `inbox.list`     | Triage the project with an agent                       | `t`             |
+| `inbox.list`     | Search                                                 | `/`             |
+| `inbox.list`     | Back                                                   | Esc             |
+| `inbox.list`     | Next / previous split                                  | Tab / ⇧Tab      |
+| `inbox.list`     | Rescan sessions                                        | none (palette)  |
+| `inbox.list`     | Show the sidebar by repo / folder / folder tree / date | none (palette)  |
+| `snooze.dialog`  | Close / Snooze                                         | Esc / ⌘Enter    |
+| `agent.picker`   | Close                                                  | Esc             |
+| `confirm.dialog` | Cancel                                                 | Esc             |
+| `palette`        | Close palette                                          | Esc, ⌘K         |
 
-Decision keys do not repeat when held. A decision applies to the marked rows when any are marked, otherwise to the selected row. Bulk archive and bulk delete ask to confirm with the count (Cancel focused); bulk harvest is refused; marks clear on a submitted decision and on a split change. A bulk decision enters the outbox as one batch (`Outbox.enqueueBatch`): one toast with Undo, `z` undoes every unsent member, and successes fold into one summary toast while refusals still toast one by one. Batch progress (size, settled, ok, undone) is the pure `src/inbox/batches.ts`; the undo toast's "already sent" is size minus undone. Resume and `t` follow the same targeting (`src/inbox/targets.ts`): marked rows if any, otherwise the selection; resume with several marks, or `t` across several projects, is refused with a toast. Dialogs share `src/inbox/Modal.tsx` (focus restore, Tab trap); a dialog's shortcut context goes in `MODAL_CONTEXT_IDS` (`src/shortcuts/contexts.ts`), which both the palette guard and the inbox read. Splits are Recent (last 7 days, newest first), Woke (oldest first) and All (oldest first); `src/inbox/derive.ts` is the only copy of the partition, order, count and project-grouping rules. Changing split resets the selection to the first row.
+Decision keys do not repeat when held. A decision applies to the marked rows when any are marked, otherwise to the selected row. Bulk archive and bulk delete ask to confirm with the count (Cancel focused); bulk harvest is refused; marks clear on a submitted decision and on a split change. A bulk decision enters the outbox as one batch (`Outbox.enqueueBatch`): one toast with Undo, `z` undoes every unsent member, and successes fold into one summary toast while refusals still toast one by one. Batch progress (size, settled, ok, undone) is the pure `src/inbox/batches.ts`; the undo toast's "already sent" is size minus undone. Resume and `t` follow the same targeting (`src/inbox/targets.ts`): marked rows if any, otherwise the selection; resume with several marks, or `t` across several projects, is refused with a toast. Dialogs share `src/inbox/Modal.tsx` (focus restore, Tab trap); a dialog's shortcut context goes in `MODAL_CONTEXT_IDS` (`src/shortcuts/contexts.ts`), which both the palette guard and the inbox read. Splits are Recent (last 7 days, newest first), Woke (oldest first) and All (oldest first); `src/inbox/derive.ts` is the only copy of the partition, order, count and project-grouping rules; the sidebar's folder, tree and date grouping lives in `src/inbox/sidebarGroups.ts`. Changing split resets the selection to the first row.
 
 ## Onboarding
 
@@ -95,9 +96,16 @@ Decision keys do not repeat when held. A decision applies to the marked rows whe
 
 ## Next steps and projects
 
-The strip under the toolbar renders `home.next_steps` in ringleader's order (`NextSteps.tsx`): woke and recent switch splits, project filters to that project across All, publish opens the Harvests tab, resume resumes the named row; the roundup step is informational until circus has a clean-up action. Project steps show the client-side counts from `projectCounts` (so pending decisions drop out at once) and are skipped when the project has nothing left; unknown step kinds are skipped too. The right side shows `home.counts`. The project sidebar queues projects oldest activity first (ties by label), like the TUI's project queue, computed client-side so pending decisions hide immediately; it also lists `in_flight` (click resumes) and `waking_soon`. When a filtered project empties, the list offers the next project in the queue and Enter goes to it.
+The strip under the toolbar renders `home.next_steps` in ringleader's order (`NextSteps.tsx`): woke and recent switch splits, project filters to that project across All, publish opens the Harvests tab, resume resumes the named row; the roundup step is informational until circus has a clean-up action. Project steps show the client-side counts from `projectCounts` (so pending decisions drop out at once) and are skipped when the project has nothing left; unknown step kinds are skipped too. The right side shows `home.counts`. The sidebar groups the current split's sessions four ways, picked by tabs (or the palette) and computed client-side so pending decisions hide immediately. It also lists `in_flight` (click resumes) and `waking_soon`.
 
-`t` triages the filtered project, or the selected row's, with an agent. One installed agent is used directly; with several, a picker opens on the last-picked agent (remembered in `localStorage`, read when the picker opens).
+- **Repos** queues projects oldest activity first (ties by label), like the TUI's project queue; projects with the same name show a dim parent.
+- **Folders** lists one entry per session folder (`project`, the cwd) with home shown as `~`, sorted by label; sessions without a folder (or with an empty one) form "Unknown folder".
+- **Tree** is the same folders as a compact tree: a `~` root, a `/` root for folders outside home (its scope leaves home out), then "Unknown folder". Folders with no sessions of their own and a single child merge into one row, roots and their first level start open, and selecting a folder shows the sessions in every folder below it.
+- **Dates** buckets by last activity in local time: today and the six days before as `YYYY-MM-DD`, then Monday-start weeks for eight weeks (labelled by their Monday, cut where the days begin), then months as `YYYY-MM`; boundaries are local midnights from calendar arithmetic, so DST weeks stay right.
+
+These rules are ported from ringleader's `ringleader/home/views.py`, which drives the same four views in the TUI; the two differences are that circus groups the current split rather than the whole triage inbox, and that `t` falls back to the selection when a scope spans several projects where the TUI refuses. Each tab keeps its own selection in memory, and the last tab used is remembered in `localStorage` (`circus.sidebar.view`). A selection is stored by its key and resolved against the current data on every render (`resolveScope`), so a date selection follows the day boundary: today gains an end at midnight, and a day that rolls into a week is dropped. A split change drops every tab's selection that has no rows in the new split. When a selected repo, folder or date empties, the list offers the next entry of the same tab and Enter goes to it; the tree has no next. The sidebar is mouse-only: its buttons never take focus, so `j`/`k` stay on the list. Its width (default 288 px, 192–512 px and at most 40% of the window) is dragged on the divider or stepped with the arrow keys when the divider has focus, reset by double-click, and stored as `circus.sidebar.width`.
+
+`t` triages the filtered project, or, for a folder, tree or date selection, the one project its sessions share; otherwise the selected row's project, with an agent. One installed agent is used directly; with several, a picker opens on the last-picked agent (remembered in `localStorage`, read when the picker opens).
 
 ## Snooze
 
@@ -140,6 +148,7 @@ Budgets (enforced in `just check`):
 | Derive chain over 5 000 rows ≤ 8 ms; `indexRows` ≤ 25 ms                                                                                  | `src/inbox/derive.perf.test.ts`          |
 | `parseSnooze` ≤ 0.2 ms per call                                                                                                           | `src/snooze/parse.perf.test.ts`          |
 | One `j` keypress renders ≤ 3 rows with 5 000 rows                                                                                         | `src/inbox/InboxView.perf.test.tsx`      |
+| Sidebar folder, tree and date grouping plus a tree filter over 5 000 rows ≤ 8 ms                                                          | `src/inbox/sidebarGroups.perf.test.ts`   |
 | `rl inbox --json` (with or without `--scan`) and `rl data export --json` stay off the heavy imports; the list over 2 000 threads ≤ 400 ms | ringleader `tests/test_contract_perf.py` |
 
 Vitest budgets use real timers and the median of 21 runs after 5 warm-ups. QA targets (j/k keypress-to-paint under 16 ms at 2 000 rows, prefetched tail within one frame, cold first paint from the cache under 300 ms) are measured by hand; see `docs/development.md`.
@@ -149,5 +158,5 @@ How the budgets are met:
 - Raw-bytes IPC with envelope-only validation (above): no `serde_json::Value` tree in Rust.
 - List cache: after every successful list (`rl inbox --json`, scanned or not), Rust writes stdout atomically (temp file, then rename) to `<app_data_dir>/list-cache.json`. `cached_list` returns those bytes, or an empty body when there is no valid cache, without waiting for `rl` resolution. On launch the UI paints from it with a "Cached · refreshing…" chip, then revalidates. With `CIRCUS_ENV_LABEL` set the cache is `<CIRCUS_WORLD_ROOT>/.circus/list-cache.json`, and it is disabled when the label has no world root, so a sandbox never writes outside its world.
 - Batched tail prefetch: the selected row plus neighbours −2..+5 of the visible order in one `tails` call, single flight, latest wins, into a 64-entry LRU keyed `(id, mtime, file_fingerprint)`. Prefetch is scheduled after the selection paints (`requestAnimationFrame`, then `setTimeout(0)`, coalesced while keys are held). When a landed tail no longer matches its row, the pane shows it labelled "May be out of date…" until the fresh one lands.
-- Selection hot path: one synchronous state update per keypress with no awaits, timers or layout reads; scrollTop and viewport height live in refs fed by the scroll handler and a `ResizeObserver`. Rows are `React.memo` components keyed by id with props `row`, `selected`, `marked` and one stable `onSelect`, in a fixed-height window. The derive chain is memoized on list, outbox entries, applied, split, project and query, never on the selection, and uses a per-list `RowIndex` (parsed mtime, lowercase haystack and both timestamp sort orders, built once per adopted list). Small subsets sort directly when that requires less work than scanning the cached order. Tails render as plain text in `<pre>` chunks with `content-visibility: auto`.
+- Selection hot path: one synchronous state update per keypress with no awaits, timers or layout reads; scrollTop and viewport height live in refs fed by the scroll handler and a `ResizeObserver`. Rows are `React.memo` components keyed by id with props `row`, `selected`, `marked` and one stable `onSelect`, in a fixed-height window. The derive chain is memoized on list, outbox entries, applied, split, sidebar selection and query, never on the selection, and uses a per-list `RowIndex` (parsed mtime, lowercase haystack and both timestamp sort orders, built once per adopted list). Small subsets sort directly when that requires less work than scanning the cached order. Tails render as plain text in `<pre>` chunks with `content-visibility: auto`.
 - Ringleader side: `inbox --json` and `export --json` import neither `textual`, `models`, `enrichment` nor `decisions`, and the guarded session verbs load their stack on demand.

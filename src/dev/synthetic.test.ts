@@ -50,4 +50,20 @@ describe('syntheticRows', () => {
     });
     expect(new Set(rows.map((row) => row.project_key)).size).toBeLessThanOrEqual(35);
   });
+
+  it('spreads sessions over checkouts, a monorepo, plain folders and an unknown folder', () => {
+    const rows = syntheticRows(500, NOW);
+    const foldersOf = (key: string) =>
+      new Set(rows.filter((row) => row.project_key === key).map((row) => row.project));
+    expect(foldersOf('github.com/acme/proj-00')).toEqual(
+      new Set(['/u/wrksp/proj-00/dev1', '/u/wrksp/proj-00/dev2']),
+    );
+    expect(foldersOf('github.com/acme/mono').size).toBeGreaterThan(1);
+    expect(rows.find((row) => row.project === '/u/notes/proj-03')).toMatchObject({
+      project_key: '/u/notes/proj-03',
+      project_label: '~/notes/proj-03',
+      git_project_key: null,
+    });
+    expect(rows.find((row) => row.project === null)).toMatchObject({ project_key: '(unknown)' });
+  });
 });

@@ -72,6 +72,7 @@ const APP_INFO: AppInfo = {
   resume_dry_run: true,
   terminal: 'iterm2',
   settings_path: `${FAKE_WORLD}/settings.json`,
+  home_dir: '/u',
 };
 
 function hashOf(text: string): number {

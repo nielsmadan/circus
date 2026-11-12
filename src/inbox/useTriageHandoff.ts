@@ -1,3 +1,4 @@
+import { readStored, writeStored } from '../storage';
 import { useCallback, useState } from 'react';
 import type { CircusApi } from '../api/client';
 import { toCircusError, type AgentInfo } from '../api/types';
@@ -30,22 +31,6 @@ export interface TriageHandoff {
   closePicker(): void;
 }
 
-function readPreferredAgent(): string | null {
-  try {
-    return window.localStorage.getItem(AGENT_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function savePreferredAgent(source: string): void {
-  try {
-    window.localStorage.setItem(AGENT_KEY, source);
-  } catch {
-    // a blocked store only loses the remembered choice
-  }
-}
-
 export function useTriageHandoff(
   api: CircusApi,
   notify: (spec: ToastSpec) => void,
@@ -55,7 +40,7 @@ export function useTriageHandoff(
 
   const start = useCallback(
     (target: TriageTarget, agent: AgentInfo) => {
-      savePreferredAgent(agent.source);
+      writeStored(AGENT_KEY, agent.source);
       const request = { project_key: target.key, agent: agent.source };
       const fail = (error: unknown) =>
         notify(triageFailedToast(target.label, errorDetail(toCircusError(error))));
@@ -82,7 +67,7 @@ export function useTriageHandoff(
       const [only, ...others] = agents;
       if (only === undefined) notify(noAgentToast());
       else if (others.length === 0) start(target, only);
-      else setChoice({ target, preferred: readPreferredAgent() });
+      else setChoice({ target, preferred: readStored(AGENT_KEY) });
     },
     [agents, notify, start],
   );

@@ -1,4 +1,5 @@
 import type { SessionRow } from '../api/types';
+import type { Scope } from './scope';
 import type { TriageTarget } from './useTriageHandoff';
 
 const NO_ROWS: readonly SessionRow[] = Object.freeze([]);
@@ -16,21 +17,29 @@ type TriageChoice =
   | { readonly kind: 'several' }
   | { readonly kind: 'none' };
 
+function onlyProject(rows: readonly SessionRow[]): TriageTarget | 'several' | null {
+  const projects = new Map(rows.map((row) => [row.project_key, row.project_label]));
+  if (projects.size > 1) return 'several';
+  const [only] = projects;
+  return only === undefined ? null : { key: only[0], label: only[1] };
+}
+
+export function scopeProject(
+  scope: Scope | null,
+  scoped: readonly SessionRow[],
+): TriageTarget | null {
+  if (scope === null) return null;
+  if (scope.kind === 'repo') return { key: scope.key, label: scope.label };
+  const project = onlyProject(scoped);
+  return project === 'several' ? null : project;
+}
+
 export function triageChoice(
-  projectKey: string | null,
-  projectLabel: string | null,
+  project: TriageTarget | null,
   targets: readonly SessionRow[],
 ): TriageChoice {
-  if (projectKey !== null) {
-    return {
-      kind: 'target',
-      target: { key: projectKey, label: projectLabel ?? targets[0]?.project_label ?? projectKey },
-    };
-  }
-  const projects = new Map(targets.map((row) => [row.project_key, row.project_label]));
-  if (projects.size > 1) return { kind: 'several' };
-  const [only] = projects;
-  return only === undefined
-    ? { kind: 'none' }
-    : { kind: 'target', target: { key: only[0], label: only[1] } };
+  if (project !== null) return { kind: 'target', target: project };
+  const only = onlyProject(targets);
+  if (only === 'several') return { kind: 'several' };
+  return only === null ? { kind: 'none' } : { kind: 'target', target: only };
 }

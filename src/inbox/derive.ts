@@ -2,6 +2,7 @@ import type { AppInfo, DecisionAction, ListResponse, SessionRow } from '../api/t
 import type { Applied } from './applied';
 import { presenceUnknownText, stillRunningText } from './messages';
 import type { OutboxEntry } from './outbox';
+import { inScope, type Scope } from './scope';
 
 export type Split = 'recent' | 'woke' | 'all';
 export const SPLITS: readonly Split[] = Object.freeze(['recent', 'woke', 'all']);
@@ -74,11 +75,11 @@ export function visibleSessions(
   return visible.length === rows.length ? (rows as SessionRow[]) : visible;
 }
 
-function mtimeOf(row: SessionRow, index: RowIndex): number {
+export function mtimeOf(row: SessionRow, index: RowIndex): number {
   return index.mtimeMs.get(row.id) ?? parseMtime(row.mtime);
 }
 
-function compareStrings(a: string, b: string): number {
+export function compareStrings(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
@@ -135,21 +136,22 @@ export function splitCounts(rows: readonly SessionRow[]): Record<Split, number> 
   return { recent, woke, all: rows.length };
 }
 
-export function filterByProject(
+export function filterByScope(
   rows: readonly SessionRow[],
-  projectKey: string | null,
+  scope: Scope | null,
+  index: RowIndex,
 ): SessionRow[] {
-  if (projectKey === null) return rows as SessionRow[];
-  return rows.filter((row) => row.project_key === projectKey);
+  if (scope === null) return rows as SessionRow[];
+  return rows.filter((row) => inScope(row, scope, mtimeOf(row, index)));
 }
 
 export function narrowRows(
   rows: readonly SessionRow[],
-  projectKey: string | null,
+  scope: Scope | null,
   query: string,
   index: RowIndex,
 ): SessionRow[] {
-  return searchRows(filterByProject(rows, projectKey), query, index);
+  return searchRows(filterByScope(rows, scope, index), query, index);
 }
 
 interface ProjectGroup {

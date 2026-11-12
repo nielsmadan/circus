@@ -97,12 +97,72 @@ function draft(random: Random, index: number, projects: number, nowMs: number): 
   };
 }
 
+type Place = Pick<
+  SessionRow,
+  | 'project'
+  | 'project_short'
+  | 'project_key'
+  | 'project_label'
+  | 'git_project_key'
+  | 'git_project_label'
+>;
+
+function shortPath(path: string): string {
+  const parts = (path.startsWith('/u/') ? `~${path.slice(2)}` : path).split('/');
+  return parts.length > 3 ? `…/${parts.slice(-2).join('/')}` : parts.join('/');
+}
+
+function inGit(cwd: string, key: string, label: string): Place {
+  return {
+    project: cwd,
+    project_short: shortPath(cwd),
+    project_key: key,
+    project_label: label,
+    git_project_key: key,
+    git_project_label: label,
+  };
+}
+
+function placeOf(d: Draft, name: string): Place {
+  if (d.index % 97 === 96) {
+    return {
+      project: null,
+      project_short: '(unknown)',
+      project_key: '(unknown)',
+      project_label: '(unknown)',
+      git_project_key: null,
+      git_project_label: null,
+    };
+  }
+  switch (d.project % 5) {
+    case 0:
+      return inGit(`/u/wrksp/${name}/dev${1 + (d.index % 2)}`, `github.com/acme/${name}`, name);
+    case 1:
+      return inGit(`/u/wrksp/mono/packages/${name}`, 'github.com/acme/mono', 'mono');
+    case 2:
+      return inGit(`/u/work/${name}`, `/u/work/${name}`, name);
+    case 3: {
+      const cwd = `/u/notes/${name}`;
+      return {
+        project: cwd,
+        project_short: shortPath(cwd),
+        project_key: cwd,
+        project_label: shortPath(cwd),
+        git_project_key: null,
+        git_project_label: null,
+      };
+    }
+    default:
+      return inGit(`/opt/src/${name}`, `gitlab.com/ops/${name}`, name);
+  }
+}
+
 function toRow(d: Draft, nowMs: number, running: boolean): SessionRow {
   const codex = d.index % 5 === 4;
   const source = codex ? 'codex' : 'claude-code';
   const sessionId = `s${d.index}`;
   const name = `proj-${String(d.project).padStart(2, '0')}`;
-  const path = `/u/work/${name}`;
+  const place = placeOf(d, name);
   const ageMs = nowMs - d.mtimeMs;
   const mtime = isoSeconds(d.mtimeMs);
   return {
@@ -111,12 +171,7 @@ function toRow(d: Draft, nowMs: number, running: boolean): SessionRow {
     agent: codex ? 'codex' : 'claude',
     session_id: sessionId,
     label: d.label,
-    project: path,
-    project_short: `…/work/${name}`,
-    project_key: path,
-    project_label: name,
-    git_project_key: path,
-    git_project_label: name,
+    ...place,
     git_branch: d.branch,
     last_prompt: d.prompt,
     what_it_is: d.what,

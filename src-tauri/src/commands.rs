@@ -155,6 +155,7 @@ pub async fn app_info(state: State<'_, AppState>) -> Result<AppInfo, CircusError
             None => TerminalKind::Iterm2,
         },
         settings_path: state.settings_path.clone(),
+        home_dir: state.home.to_string_lossy().into_owned(),
     })
 }
 

@@ -1,3 +1,5 @@
+import { localDayNumber } from '../localDay';
+
 export type SnoozeParse =
   { readonly ok: true; readonly at: Date } | { readonly ok: false; readonly error: string };
 
@@ -27,7 +29,6 @@ const DEFAULT_MINUTES = 9 * 60;
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
 const QUARTER_MS = 900_000;
-const DAY_MS = 86_400_000;
 const MONTH_DAYS = 30;
 
 const MONTHS: Readonly<Record<string, number>> = {
@@ -276,8 +277,6 @@ const MONTH_NAMES = [
 ] as const;
 
 const pad2 = (n: number): string => String(n).padStart(2, '0');
-const localDayNumber = (d: Date): number =>
-  Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / DAY_MS);
 
 export function formatSnoozeTime(at: Date, now: Date): string {
   const clock = `${pad2(at.getHours())}:${pad2(at.getMinutes())}`;

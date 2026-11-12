@@ -526,7 +526,7 @@ describe('InboxView search, splits and projects', () => {
 
   it('filters by a sidebar project and clears it with Escape', async () => {
     await renderInbox();
-    const projects = screen.getByRole('navigation', { name: 'Projects' });
+    const projects = screen.getByRole('navigation', { name: 'Repos' });
     const project = within(projects).getByRole('button', { name: /proj-01/ });
     expect(project).toHaveTextContent('proj-012');
     click(project);
@@ -541,11 +541,11 @@ describe('InboxView search, splits and projects', () => {
 describe('InboxView project filter and undo across splits', () => {
   it('drops a project filter that has no rows in the split it switches to', async () => {
     await renderInbox();
-    const projects = screen.getByRole('navigation', { name: 'Projects' });
+    const projects = screen.getByRole('navigation', { name: 'Repos' });
     click(within(projects).getByRole('button', { name: /proj-01/ }));
     press('Tab');
     expect(shownIds()).toEqual([wokeOlder.id, wokeNewer.id]);
-    expect(within(projects).getByRole('button', { name: /All projects/ })).toHaveAttribute(
+    expect(within(projects).getByRole('button', { name: /All repos/ })).toHaveAttribute(
       'aria-current',
       'true',
     );
@@ -553,12 +553,12 @@ describe('InboxView project filter and undo across splits', () => {
 
   it('says a project filter hides everything when the project empties', async () => {
     await renderInbox();
-    const projects = screen.getByRole('navigation', { name: 'Projects' });
+    const projects = screen.getByRole('navigation', { name: 'Repos' });
     click(within(projects).getByRole('button', { name: /proj-01/ }));
     press('KeyE', { shiftKey: true });
     press('KeyE', { shiftKey: true });
     expect(
-      screen.getByText('This project is done. Next: proj-00 (1 waiting) — Enter'),
+      screen.getByText('This repo is done. Next: proj-00 (1 waiting) — Enter'),
     ).toBeInTheDocument();
     press('Enter');
     expect(within(projects).getByRole('button', { name: /proj-00/ })).toHaveAttribute(
@@ -572,11 +572,11 @@ describe('InboxView project filter and undo across splits', () => {
 
   it('says the last project is done when no other project waits', async () => {
     await renderInbox(makeList([parser]));
-    const projects = screen.getByRole('navigation', { name: 'Projects' });
+    const projects = screen.getByRole('navigation', { name: 'Repos' });
     click(within(projects).getByRole('button', { name: /proj-01/ }));
     press('KeyE', { shiftKey: true });
     expect(
-      screen.getByText('This project is done — all caught up. Esc shows all projects'),
+      screen.getByText('This repo is done — all caught up. Esc shows all repos'),
     ).toBeInTheDocument();
   });
 
@@ -771,13 +771,25 @@ describe('InboxView next steps and sidebar', () => {
   it('filters to the project from its step, across all splits', async () => {
     await renderInbox(withHome());
     click(within(stepItem('proj-01')).getByRole('button', { name: 'Triage' }));
-    const projects = screen.getByRole('navigation', { name: 'Projects' });
+    const projects = screen.getByRole('navigation', { name: 'Repos' });
     expect(within(projects).getByRole('button', { name: /proj-01/ })).toHaveAttribute(
       'aria-current',
       'true',
     );
     expect(screen.getByRole('tab', { name: /All/ })).toHaveAttribute('aria-selected', 'true');
     expect(shownIds()).toEqual([docs.id, parser.id]);
+  });
+
+  it('switches the sidebar back to Repos for a project step', async () => {
+    window.localStorage.setItem('circus.sidebar.view', 'folders');
+    await renderInbox(withHome());
+    expect(screen.getByRole('navigation', { name: 'Folders' })).toBeInTheDocument();
+    click(within(stepItem('proj-01')).getByRole('button', { name: 'Triage' }));
+    const projects = screen.getByRole('navigation', { name: 'Repos' });
+    expect(within(projects).getByRole('button', { name: /proj-01/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
   });
 
   it('switches to the Harvests tab from the publish step', async () => {
@@ -881,7 +893,7 @@ describe('InboxView triage with an agent', () => {
 
   it("triages the filtered project even when another project's row is selected", async () => {
     await renderInbox(withAgents([claude]));
-    const projects = screen.getByRole('navigation', { name: 'Projects' });
+    const projects = screen.getByRole('navigation', { name: 'Repos' });
     click(within(projects).getByRole('button', { name: /proj-00/ }));
     press('KeyT');
     await flush();
@@ -1148,5 +1160,232 @@ describe('InboxView marking and bulk decisions', () => {
     press('Tab');
     press('Tab', { shiftKey: true });
     expect(marked()).toEqual([]);
+  });
+});
+
+describe('InboxView sidebar layout', () => {
+  const separator = () => screen.getByRole('separator', { name: 'Resize sidebar' });
+  const columns = () => separator().parentElement?.parentElement?.style.gridTemplateColumns;
+  const resizeWindow = (width: number) => {
+    Object.defineProperty(window, 'innerWidth', { value: width, configurable: true });
+    act(() => {
+      window.dispatchEvent(new Event('resize'));
+    });
+  };
+  const capture = vi.fn();
+  const innerWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
+
+  beforeEach(() => {
+    Object.defineProperty(Element.prototype, 'setPointerCapture', {
+      value: capture,
+      configurable: true,
+    });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(Element.prototype, 'setPointerCapture');
+    if (innerWidth !== undefined) Object.defineProperty(window, 'innerWidth', innerWidth);
+  });
+
+  it('starts at the default width and resizes with the arrow keys, remembering the width', async () => {
+    await renderInbox();
+    expect(separator()).toHaveAttribute('aria-valuenow', '288');
+    act(() => {
+      separator().focus();
+    });
+    act(() => {
+      fireEvent.keyDown(separator(), { key: 'ArrowRight' });
+    });
+    expect(separator()).toHaveAttribute('aria-valuenow', '304');
+    expect(columns()).toMatch(/^min\(304px, 40vw\) /);
+    cleanup();
+    await renderInbox();
+    expect(separator()).toHaveAttribute('aria-valuenow', '304');
+  });
+
+  it('reports and steps from the width the window allows', async () => {
+    window.localStorage.setItem('circus.sidebar.width', '512');
+    await renderInbox();
+    resizeWindow(900);
+    expect(separator()).toHaveAttribute('aria-valuenow', '360');
+    act(() => {
+      fireEvent.keyDown(separator(), { key: 'ArrowLeft' });
+    });
+    expect(separator()).toHaveAttribute('aria-valuenow', '344');
+    expect(window.localStorage.getItem('circus.sidebar.width')).toBe('344');
+  });
+
+  it('follows a drag, keeps it within bounds and resets on double-click', async () => {
+    await renderInbox();
+    act(() => {
+      fireEvent.pointerDown(separator(), { pointerId: 1, button: 0, clientX: 288 });
+      fireEvent.pointerMove(separator(), { pointerId: 1, clientX: 340 });
+    });
+    expect(document.body).toHaveClass('circus-resizing');
+    expect(columns()).toMatch(/^min\(340px, 40vw\) /);
+    expect(separator()).toHaveAttribute('aria-valuenow', '288');
+    act(() => {
+      fireEvent.pointerMove(separator(), { pointerId: 1, clientX: 2000 });
+      fireEvent.pointerUp(separator(), { pointerId: 1, clientX: 2000 });
+    });
+    expect(document.body).not.toHaveClass('circus-resizing');
+    expect(window.localStorage.getItem('circus.sidebar.width')).toBe('512');
+    expect(separator()).toHaveAttribute('aria-valuenow', '409');
+    act(() => {
+      fireEvent.doubleClick(separator());
+    });
+    expect(separator()).toHaveAttribute('aria-valuenow', '288');
+    expect(capture).toHaveBeenCalledWith(1);
+  });
+
+  it('keeps the saved width on a click without a drag, and commits a cancelled drag', async () => {
+    window.localStorage.setItem('circus.sidebar.width', '512');
+    await renderInbox();
+    resizeWindow(900);
+    act(() => {
+      fireEvent.pointerDown(separator(), { pointerId: 2, button: 0, clientX: 360 });
+      fireEvent.pointerUp(separator(), { pointerId: 2, clientX: 360 });
+    });
+    expect(window.localStorage.getItem('circus.sidebar.width')).toBe('512');
+    act(() => {
+      fireEvent.pointerDown(separator(), { pointerId: 3, button: 0, clientX: 360 });
+      fireEvent.pointerMove(separator(), { pointerId: 3, clientX: 300 });
+      fireEvent.pointerCancel(separator(), { pointerId: 3 });
+    });
+    expect(window.localStorage.getItem('circus.sidebar.width')).toBe('300');
+    expect(document.body).not.toHaveClass('circus-resizing');
+  });
+});
+
+describe('InboxView sidebar views', () => {
+  const tab = (name: string) => screen.getByRole('tab', { name });
+  const nav = (name: string) => screen.getByRole('navigation', { name });
+
+  it('groups by folder, keeps each view its own selection and remembers the view', async () => {
+    await renderInbox();
+    click(tab('Folders'));
+    const folder = within(nav('Folders')).getByRole('button', { name: /proj-01/ });
+    expect(folder).toHaveTextContent('~/work/proj-012');
+    click(folder);
+    expect(shownIds()).toEqual([parser.id, docs.id]);
+    click(tab('Repos'));
+    expect(shownIds()).toEqual([parser.id, login.id, docs.id]);
+    click(tab('Folders'));
+    expect(shownIds()).toEqual([parser.id, docs.id]);
+    expect(window.localStorage.getItem('circus.sidebar.view')).toBe('folders');
+    cleanup();
+    await renderInbox();
+    expect(tab('Folders')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('shows a folder tree where a parent folder holds every session under it', async () => {
+    await renderInbox();
+    click(tab('Tree'));
+    const tree = nav('Folder tree');
+    click(within(tree).getByRole('button', { name: /^~\/work3/ }));
+    expect(shownIds()).toEqual([parser.id, login.id, docs.id]);
+    click(within(tree).getByRole('button', { name: /^proj-01/ }));
+    expect(shownIds()).toEqual([parser.id, docs.id]);
+    click(within(tree).getByRole('button', { name: 'Collapse ~/work' }));
+    expect(within(tree).getByRole('button', { name: 'Expand ~/work' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+    expect(shownIds()).toEqual([parser.id, docs.id]);
+  });
+
+  it('groups by day of last activity', async () => {
+    await renderInbox();
+    click(tab('Dates'));
+    const dates = within(nav('Dates'))
+      .getAllByRole('button')
+      .map((button) => button.textContent);
+    expect(dates).toEqual(['All dates3', '2026-10-151', '2026-10-141', '2026-10-131']);
+    click(within(nav('Dates')).getByRole('button', { name: /^2026-10-14/ }));
+    expect(shownIds()).toEqual([login.id]);
+  });
+
+  it('drops a selection in another view that has no rows in the split it switches to', async () => {
+    await renderInbox();
+    click(tab('Folders'));
+    click(within(nav('Folders')).getByRole('button', { name: /proj-01/ }));
+    click(tab('Repos'));
+    press('Tab');
+    click(tab('Folders'));
+    expect(shownIds()).toEqual([wokeOlder.id, wokeNewer.id]);
+    expect(within(nav('Folders')).getByRole('button', { name: /All folders/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+  });
+
+  it('drops a day selection from before a day change that has no rows in the next split', async () => {
+    const today = makeRow({
+      id: 'claude-code:t',
+      session_id: 't',
+      mtime: '2026-10-16T12:00:00+00:00',
+    });
+    const wokeTomorrow = makeRow({
+      id: 'claude-code:w3',
+      session_id: 'w3',
+      mtime: '2026-10-17T12:00:00+00:00',
+      in_recent: false,
+      woke: true,
+    });
+    await renderInbox(makeList([today, ...ROWS]));
+    click(tab('Dates'));
+    click(within(nav('Dates')).getByRole('button', { name: /^2026-10-16/ }));
+    api.setList(
+      makeList([today, wokeTomorrow, ...ROWS], { generated_at: '2026-10-17T12:00:00+00:00' }),
+    );
+    act(() => {
+      harness.registry.dispatch(inboxListContext, 'rescan');
+    });
+    await flush();
+    expect(shownIds()).toEqual([today.id]);
+    press('Tab');
+    expect(shownIds()).toEqual([wokeOlder.id, wokeNewer.id, wokeTomorrow.id]);
+    expect(within(nav('Dates')).getByRole('button', { name: /All dates/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+  });
+
+  it('names the next folder by its whole path when a folder empties', async () => {
+    await renderInbox();
+    click(tab('Folders'));
+    click(within(nav('Folders')).getByRole('button', { name: /proj-01/ }));
+    press('KeyE', { shiftKey: true });
+    press('KeyE', { shiftKey: true });
+    expect(
+      screen.getByText('This folder is done. Next: ~/work/proj-00 (1 waiting) — Enter'),
+    ).toBeInTheDocument();
+  });
+
+  it('triages the one project a folder holds', async () => {
+    await renderInbox(
+      makeList(ROWS, { agents: [{ source: 'claude-code', agent: 'claude', installed: true }] }),
+    );
+    click(tab('Folders'));
+    click(within(nav('Folders')).getByRole('button', { name: /proj-01/ }));
+    press('KeyJ');
+    press('KeyJ');
+    press('KeyT');
+    await flush();
+    expect(api.argsOf('previewHandoff')).toEqual([
+      [{ project_key: '/u/work/proj-01', agent: 'claude-code' }],
+    ]);
+  });
+
+  it('switches the view from the palette', async () => {
+    await renderInbox();
+    act(() => {
+      harness.registry.dispatch(inboxListContext, 'sidebarDates');
+    });
+    expect(screen.getByRole('tab', { name: 'Dates' })).toHaveAttribute('aria-selected', 'true');
+    act(() => {
+      harness.registry.dispatch(inboxListContext, 'sidebarTree');
+    });
+    expect(screen.getByRole('navigation', { name: 'Folder tree' })).toBeInTheDocument();
   });
 });

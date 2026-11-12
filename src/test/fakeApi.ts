@@ -60,6 +60,7 @@ export const NATIVE_INFO: AppInfo = {
   resume_dry_run: false,
   terminal: 'iterm2',
   settings_path: '/u/Library/Application Support/circus/settings.json',
+  home_dir: '/u',
 };
 
 export function okOutcome(

@@ -48,6 +48,10 @@ export const inboxListContext = defineContext({
     nextSplit: { displayName: 'Next split', defaults: 'tab' },
     previousSplit: { displayName: 'Previous split', defaults: 'shift+tab' },
     rescan: { displayName: 'Rescan sessions' },
+    sidebarRepos: { displayName: 'Show the sidebar by repo' },
+    sidebarFolders: { displayName: 'Show the sidebar by folder' },
+    sidebarTree: { displayName: 'Show the sidebar as a folder tree' },
+    sidebarDates: { displayName: 'Show the sidebar by date' },
   },
 });
 
