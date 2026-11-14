@@ -25,7 +25,7 @@ The world is rebuilt on every launch, so a sandbox launch starts without a list 
 
 ## The fake harness
 
-`pnpm dev:fake` serves the whole Inbox in a plain browser over the in-memory API in `src/dev/memoryApi.ts`: list, reading pane, all six decisions with undo, marks and bulk decisions, snooze dialog, next steps, the `t` hand-off, dry-run resume toast, ⌘K palette, and the setup screen. No Tauri, no `rl`. It is what agent-browser drives.
+`pnpm dev:fake` serves the whole Inbox in a plain browser over the in-memory API in `src/dev/memoryApi.ts`: list, reading pane, all six decisions with undo, multi-selection and bulk decisions, snooze dialog, next steps, the `t` hand-off, dry-run resume toast, ⌘K palette, and the setup screen. No Tauri, no `rl`. It is what agent-browser drives.
 
 The fake decides as the guarded `rl session` verbs do, so QA in the harness sees real outcomes: archive, delete and harvest are refused without a five-field numeric fingerprint (the synthetic rows carry real-shaped ones), then for a lifecycle block (`cannot <action> …`), a session that left the registry or a changed `mtime`, then for a running or presence-unknown session, in that order; keep and keep going on a missing session are `failed`; a snooze without `until` is rejected as `invalid_argument` the way Rust rejects it, and an unparsable, offset-less or past `until` is refused.
 
@@ -45,7 +45,7 @@ QA each Inbox behavior in the harness:
 - the sidebar's Repos, Folders, Tree and Dates tabs (selection per tab, an emptied selection offering the next entry), dragging, arrow-stepping and double-clicking its divider;
 - `e`, ⇧E, `#`, `h` (dialog: typed text, picker, presets, ⌘Enter), `s`, `r`, each followed by `z` within the window, and again after the window to see the row stay hidden;
 - `o` / Enter: dry-run toast;
-- `x` marks, ⇧8 marks all; a decision on several marks: confirm dialog for archive/delete, one batch toast, `z` undoes the unsent members;
+- selection: click, ⌘-click (and ⌘-click deselecting the last row), ⇧-click, ⇧J/⇧K and ⇧↓/⇧↑, Home/End and ⇧Home/⇧End, ⌘A in the list and in the search box or palette, Esc clearing the selection first, double-click resuming; `x` selects, ⇧8 selects all; a decision on several rows: confirm dialog for archive/delete, one batch toast, `z` undoes the unsent members;
 - `t`: agent picker with several agents, dry-run hand-off toast; next-steps strip buttons;
 - ⌘K palette and its commands; ⌘1–⌘3 tabs;
 - `window.circusFake.requestClose()` with one pending decision: overlay, "Discard unsent".
@@ -77,6 +77,8 @@ Next lever: if cold `rl` spawns (about 100–300 ms per call) still feel slow, t
 4. Run `just check` and `just test-smoke`. `just golden-check` fails when the copies drift.
 5. Once ringleader tags the release, `just pin-ringleader <version>` (raise `minimum` in `ringleader.json` if circus now depends on the change) and rerun `just golden-check` without the override.
 
+Next lever: if updating `src/api/types.ts` by hand starts to cost real time (a larger contract, or a third consumer), ringleader would ship a JSON Schema per document beside `contract-golden.tar.gz`, circus would generate its types from it, and both sides would validate their goldens against it. The goldens stay either way, since they also catch value drift a schema allows. It is deliberately not built.
+
 ## User-run native QA
 
 These need the native window and are run by hand; agents do not run them. Use the SANDBOX app for decisions and quitting; use `Circus.app` only for the last items.
@@ -91,5 +93,6 @@ These need the native window and are run by hand; agents do not run them. Use th
 8. One real resume from `Circus.app`, without `CIRCUS_RESUME_DRY_RUN`, against the `rl` onboarding installed: iTerm2 opens and macOS prompts for Automation. Denying it shows the hint naming System Settings › Privacy & Security › Automation.
 9. Relaunch `Circus.app` after a successful list: the list paints immediately with the "Cached · refreshing…" chip, which disappears when the live list lands.
 10. Hold `j` over a long list: it scrolls smoothly and the reading pane follows.
-11. View › Appearance: Light and Dark switch the title bar, the menus and the whole UI at once, and exactly one item stays checked, including after clicking the checked one. With Follow System, toggling System Settings › Appearance switches the app live. The choice survives a relaunch, and a choice made in the SANDBOX app does not change `Circus.app`.
-12. Onboarding in `Circus.app` with a fresh `setup.json`: the setup screen says which ringleader it will use; Install (or Update) installs the pinned release; Start runs the presence step and, if ticked, skills and hooks, then opens the Inbox. If the presence step fails, the Inbox opens with a warning toast and the presence banner offers the retry.
+11. ⌘A in the SANDBOX app's session list selects every row; with the search box focused it selects the search text.
+12. View › Appearance: Light and Dark switch the title bar, the menus and the whole UI at once, and exactly one item stays checked, including after clicking the checked one. With Follow System, toggling System Settings › Appearance switches the app live. The choice survives a relaunch, and a choice made in the SANDBOX app does not change `Circus.app`.
+13. Onboarding in `Circus.app` with a fresh `setup.json`: the setup screen says which ringleader it will use; Install (or Update) installs the pinned release; Start runs the presence step and, if ticked, skills and hooks, then opens the Inbox. If the presence step fails, the Inbox opens with a warning toast and the presence banner offers the retry.

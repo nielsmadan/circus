@@ -741,7 +741,7 @@ describe('useInbox bulk decisions', () => {
     act(() => {
       expect(result.current.decideMany('harvest', [rowA, rowB])).toBe(false);
     });
-    expect(texts(result)).toEqual(['Harvest one session at a time — unmark all but one']);
+    expect(texts(result)).toEqual(['Harvest one session at a time — deselect all but one']);
     expect(result.current.entries).toEqual([]);
   });
 

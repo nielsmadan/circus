@@ -2,16 +2,6 @@ import type { SessionRow } from '../api/types';
 import type { Scope } from './scope';
 import type { TriageTarget } from './useTriageHandoff';
 
-const NO_ROWS: readonly SessionRow[] = Object.freeze([]);
-
-export function actionTargets(
-  marked: readonly SessionRow[],
-  selected: SessionRow | null,
-): readonly SessionRow[] {
-  if (marked.length > 0) return marked;
-  return selected === null ? NO_ROWS : [selected];
-}
-
 type TriageChoice =
   | { readonly kind: 'target'; readonly target: TriageTarget }
   | { readonly kind: 'several' }

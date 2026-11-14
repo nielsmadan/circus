@@ -117,9 +117,9 @@ const type = (input: HTMLElement, value: string) => {
     fireEvent.change(input, { target: { value } });
   });
 };
-const click = (element: HTMLElement) => {
+const click = (element: HTMLElement, init: MouseEventInit = {}) => {
   act(() => {
-    fireEvent.click(element);
+    fireEvent.click(element, init);
   });
 };
 const search = () => screen.getByRole('searchbox', { name: 'Search sessions' });
@@ -128,8 +128,10 @@ const shownIds = () =>
   within(listbox())
     .queryAllByRole('option')
     .map((option) => option.dataset.rowId);
-const selectedId = () =>
-  within(listbox()).getByRole('option', { selected: true }).dataset.rowId ?? null;
+const selectedId = () => {
+  const domId = listbox().getAttribute('aria-activedescendant');
+  return domId === null ? null : (document.getElementById(domId)?.dataset.rowId ?? null);
+};
 const pane = () => screen.getByRole('region', { name: 'Reading pane' });
 const paneTitle = () => within(pane()).getByRole('heading').textContent;
 const field = (name: string) =>
@@ -990,7 +992,7 @@ describe('InboxView triage with an agent', () => {
     press('KeyT');
     expect(
       screen.getByText(
-        'The marked sessions are in several projects — triage one project at a time',
+        'The selected sessions are in several projects — triage one project at a time',
       ),
     ).toBeInTheDocument();
     expect(api.count('previewHandoff')).toBe(0);
@@ -1004,12 +1006,28 @@ describe('InboxView triage with an agent', () => {
   });
 });
 
-describe('InboxView marking and bulk decisions', () => {
-  const marked = () =>
+describe('InboxView selection and bulk decisions', () => {
+  const extra = makeRow({
+    id: 'claude-code:x',
+    session_id: 'x',
+    label: 'extra',
+    mtime: '2026-10-12T12:00:00+00:00',
+    file_fingerprint: 'fp-x',
+  });
+  const highlighted = () =>
     within(listbox())
-      .queryAllByRole('option')
-      .filter((option) => option.getAttribute('aria-checked') === 'true')
+      .queryAllByRole('option', { selected: true })
       .map((option) => option.dataset.rowId);
+  const marked = () =>
+    screen.queryByText(/^\d+ selected$/) === null
+      ? []
+      : within(listbox())
+          .queryAllByRole('option', { selected: true })
+          .map((option) => option.dataset.rowId);
+  const row = (id: string) =>
+    within(listbox())
+      .getAllByRole('option')
+      .find((option) => option.dataset.rowId === id) as HTMLElement;
   const decidedIds = () => api.argsOf('decide').map(([request]) => request.id);
   const markParserAndLogin = () => {
     press('KeyX');
@@ -1021,7 +1039,7 @@ describe('InboxView marking and bulk decisions', () => {
     await renderInbox();
     markParserAndLogin();
     expect(marked()).toEqual([parser.id, login.id]);
-    expect(screen.getByText('2 marked')).toBeInTheDocument();
+    expect(screen.getByText('2 selected')).toBeInTheDocument();
     press('KeyX');
     expect(marked()).toEqual([parser.id]);
   });
@@ -1092,7 +1110,7 @@ describe('InboxView marking and bulk decisions', () => {
     markParserAndLogin();
     press('KeyE');
     expect(
-      screen.getByText('Harvest one session at a time — unmark all but one'),
+      screen.getByText('Harvest one session at a time — deselect all but one'),
     ).toBeInTheDocument();
     expect(marked()).toEqual([parser.id, login.id]);
   });
@@ -1122,7 +1140,7 @@ describe('InboxView marking and bulk decisions', () => {
     press('KeyO');
     await flush();
     expect(
-      screen.getByText('Resume one session at a time — unmark all but one'),
+      screen.getByText('Resume one session at a time — deselect all but one'),
     ).toBeInTheDocument();
     expect(api.count('resume')).toBe(0);
   });
@@ -1153,13 +1171,288 @@ describe('InboxView marking and bulk decisions', () => {
     expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull();
   });
 
-  it('clears the marks when the split changes', async () => {
+  it('selects one row on click and adds or removes rows on ⌘-click', async () => {
+    await renderInbox();
+    click(row(login.id));
+    expect(selectedId()).toBe(login.id);
+    expect(marked()).toEqual([]);
+    click(row(docs.id), { metaKey: true });
+    expect(marked()).toEqual([login.id, docs.id]);
+    expect(selectedId()).toBe(docs.id);
+    click(row(login.id), { metaKey: true });
+    expect(marked()).toEqual([docs.id]);
+    click(row(parser.id));
+    expect(marked()).toEqual([]);
+    expect(selectedId()).toBe(parser.id);
+  });
+
+  it('leaves nothing to decide on after ⌘-click deselects the last selected row', async () => {
+    await renderInbox();
+    click(row(login.id));
+    click(row(docs.id), { metaKey: true });
+    click(row(docs.id), { metaKey: true });
+    click(row(login.id), { metaKey: true });
+    expect(highlighted()).toEqual([]);
+    expect(selectedId()).toBe(login.id);
+    press('KeyS');
+    expect(shownIds()).toEqual([parser.id, login.id, docs.id]);
+    press('KeyJ');
+    expect(highlighted()).toEqual([docs.id]);
+  });
+
+  it('asks to confirm a delete of a selected row that is not the open one', async () => {
+    await renderInbox();
+    press('KeyX');
+    press('KeyJ');
+    press('Digit3', { shiftKey: true });
+    expect(
+      screen.getByRole('alertdialog', { name: 'Delete 1 session permanently?' }),
+    ).toBeInTheDocument();
+  });
+
+  it('decides on the whole range a ⇧-click selects', async () => {
+    await renderInbox();
+    click(row(docs.id));
+    click(row(parser.id), { shiftKey: true });
+    expect(marked()).toEqual([parser.id, login.id, docs.id]);
+    press('KeyS');
+    await advance(4_000);
+    await flush();
+    expect(decidedIds()).toEqual([parser.id, login.id, docs.id]);
+  });
+
+  it('adds a ⇧-click range to rows picked with ⌘-click', async () => {
+    await renderInbox(makeList([...ROWS, extra]));
+    click(row(parser.id));
+    click(row(docs.id), { metaKey: true });
+    click(row('claude-code:x'), { shiftKey: true });
+    expect(marked()).toEqual([parser.id, docs.id, 'claude-code:x']);
+  });
+
+  it('selects every shown row with ⌘A', async () => {
+    await renderInbox();
+    type(search(), 'fix');
+    act(() => listbox().focus());
+    press('KeyA', { metaKey: true });
+    expect(marked()).toEqual([parser.id, login.id]);
+  });
+
+  it('clears the selection with Esc before the search', async () => {
+    await renderInbox();
+    type(search(), 'fix');
+    act(() => listbox().focus());
+    press('KeyJ', { shiftKey: true });
+    press('Escape');
+    expect(marked()).toEqual([]);
+    expect(search()).toHaveValue('fix');
+  });
+
+  it('clears the selection with Esc before the sidebar selection', async () => {
+    await renderInbox();
+    const project = within(screen.getByRole('navigation', { name: 'Repos' })).getByRole('button', {
+      name: /proj-01/,
+    });
+    click(project);
+    press('KeyJ', { shiftKey: true });
+    press('Escape');
+    expect(marked()).toEqual([]);
+    expect(project).toHaveAttribute('aria-current', 'true');
+    press('Escape');
+    expect(shownIds()).toEqual([parser.id, login.id, docs.id]);
+  });
+
+  it('returns focus to the list after a dialog opened from the palette closes', async () => {
+    await renderInbox();
+    act(() => listbox().focus());
+    press('KeyK', { metaKey: true });
+    const palette = screen.getByRole('dialog', { name: 'Command palette' });
+    click(within(palette).getByRole('option', { name: /^Snooze/ }));
+    press('Escape');
+    expect(listbox()).toHaveFocus();
+  });
+
+  it('selects every shown row when Select all runs from the palette', async () => {
+    await renderInbox();
+    act(() => listbox().focus());
+    press('KeyK', { metaKey: true });
+    const palette = screen.getByRole('dialog', { name: 'Command palette' });
+    click(within(palette).getByRole('option', { name: /^Select all/ }));
+    expect(marked()).toEqual([parser.id, login.id, docs.id]);
+  });
+
+  it('selects the palette text on ⌘A inside the palette', async () => {
+    await renderInbox();
+    act(() => listbox().focus());
+    press('KeyK', { metaKey: true });
+    const input = screen.getByRole('textbox', { name: 'Search commands' }) as HTMLInputElement;
+    type(input, 'sel');
+    press('KeyA', { metaKey: true });
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 3]);
+    expect(marked()).toEqual([]);
+  });
+
+  it('drops selected rows a search hides', async () => {
+    await renderInbox();
+    press('KeyJ', { shiftKey: true });
+    press('KeyJ', { shiftKey: true });
+    type(search(), 'fix');
+    expect(marked()).toEqual([parser.id, login.id]);
+    type(search(), '');
+    expect(marked()).toEqual([parser.id, login.id]);
+  });
+
+  it('joins the highlighted row on ⌘-click after a search hid the selection', async () => {
+    await renderInbox();
+    press('End');
+    press('KeyX');
+    type(search(), 'fix');
+    act(() => listbox().focus());
+    click(row(parser.id), { metaKey: true });
+    expect(marked()).toEqual([parser.id, login.id]);
+  });
+
+  it('moves to the row after a removed range when the cursor ends the range', async () => {
+    await renderInbox(makeList([...ROWS, extra]));
+    press('KeyJ', { shiftKey: true });
+    press('KeyS');
+    expect(shownIds()).toEqual([docs.id, 'claude-code:x']);
+    expect(selectedId()).toBe(docs.id);
+  });
+
+  it('selects the search text on ⌘A in the search box', async () => {
+    await renderInbox();
+    type(search(), 'fix');
+    act(() => search().focus());
+    press('KeyA', { metaKey: true });
+    expect(marked()).toEqual([]);
+    expect([
+      (search() as HTMLInputElement).selectionStart,
+      (search() as HTMLInputElement).selectionEnd,
+    ]).toEqual([0, 3]);
+  });
+
+  it('leaves Home to the search box', async () => {
+    await renderInbox();
+    press('KeyJ');
+    act(() => search().focus());
+    press('Home');
+    expect(selectedId()).toBe(login.id);
+  });
+
+  it('extends the selection with ⇧J and ⇧K', async () => {
+    await renderInbox();
+    press('KeyJ', { shiftKey: true });
+    expect(marked()).toEqual([parser.id, login.id]);
+    press('KeyJ', { shiftKey: true });
+    expect(marked()).toEqual([parser.id, login.id, docs.id]);
+    press('KeyK', { shiftKey: true });
+    expect(marked()).toEqual([parser.id, login.id]);
+    expect(selectedId()).toBe(login.id);
+  });
+
+  it('extends the selection with ⇧↓ and ⇧↑', async () => {
+    await renderInbox();
+    press('ArrowDown', { shiftKey: true });
+    press('ArrowDown', { shiftKey: true });
+    expect(marked()).toEqual([parser.id, login.id, docs.id]);
+    press('ArrowUp', { shiftKey: true });
+    expect(marked()).toEqual([parser.id, login.id]);
+  });
+
+  it('keeps a single selection when ⇧K finds no row above', async () => {
+    await renderInbox();
+    press('KeyK', { shiftKey: true });
+    expect(marked()).toEqual([]);
+    expect(highlighted()).toEqual([parser.id]);
+  });
+
+  it('starts a new range after a plain move back to where the last one ended', async () => {
+    await renderInbox();
+    press('KeyJ', { shiftKey: true });
+    press('KeyJ', { shiftKey: true });
+    press('KeyK');
+    press('KeyJ');
+    press('KeyK', { shiftKey: true });
+    expect(marked()).toEqual([parser.id, login.id, docs.id]);
+  });
+
+  it('jumps to the last and first row', async () => {
+    await renderInbox();
+    press('End');
+    expect(selectedId()).toBe(docs.id);
+    press('Home');
+    expect(selectedId()).toBe(parser.id);
+    expect(marked()).toEqual([]);
+  });
+
+  it('extends the selection to the last and first row', async () => {
+    await renderInbox();
+    press('End', { shiftKey: true });
+    expect(marked()).toEqual([parser.id, login.id, docs.id]);
+    expect(selectedId()).toBe(docs.id);
+    press('Escape');
+    press('Home', { shiftKey: true });
+    expect(marked()).toEqual([parser.id, login.id, docs.id]);
+    expect(selectedId()).toBe(parser.id);
+  });
+
+  it('opens a row on double-click', async () => {
+    await renderInbox();
+    act(() => {
+      fireEvent.doubleClick(row(login.id));
+    });
+    await flush();
+    expect(api.argsOf('resume')).toEqual([[login.id]]);
+  });
+
+  it('clears the selection when the sidebar selection changes', async () => {
+    await renderInbox();
+    press('KeyA', { metaKey: true });
+    expect(marked()).toHaveLength(3);
+    click(
+      within(screen.getByRole('navigation', { name: 'Repos' })).getByRole('button', {
+        name: /proj-01/,
+      }),
+    );
+    expect(marked()).toEqual([]);
+  });
+
+  it('clears the selection when the split changes', async () => {
     await renderInbox();
     press('KeyX');
     expect(marked()).toHaveLength(1);
-    press('Tab');
     press('Tab', { shiftKey: true });
+    expect(screen.getByRole('tab', { name: /All/ })).toHaveAttribute('aria-selected', 'true');
+    expect(shownIds()).toContain(parser.id);
     expect(marked()).toEqual([]);
+  });
+
+  it('selects every shown row when Select all runs from the palette with nothing focused', async () => {
+    await renderInbox();
+    act(() => (document.activeElement as HTMLElement | null)?.blur());
+    press('KeyK', { metaKey: true });
+    const palette = screen.getByRole('dialog', { name: 'Command palette' });
+    click(within(palette).getByRole('option', { name: /^Select all/ }));
+    expect(marked()).toEqual([parser.id, login.id, docs.id]);
+  });
+
+  it('asks to confirm harvesting a selected row that is not the open one', async () => {
+    await renderInbox();
+    press('KeyX');
+    press('KeyJ');
+    press('KeyE');
+    expect(
+      screen.getByRole('alertdialog', { name: 'Harvest and archive 1 session?' }),
+    ).toBeInTheDocument();
+  });
+
+  it('selects a row again on ⇧-click after ⌘-click deselected it', async () => {
+    await renderInbox();
+    click(row(login.id));
+    click(row(login.id), { metaKey: true });
+    expect(highlighted()).toEqual([]);
+    click(row(login.id), { shiftKey: true });
+    expect(highlighted()).toEqual([login.id]);
   });
 });
 

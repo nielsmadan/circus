@@ -12,6 +12,7 @@ import { toCircusError, type DecisionAction, type NextStep, type SessionRow } fr
 import { AgentPicker } from './AgentPicker';
 import { ConfirmDialog } from './ConfirmDialog';
 import { inboxListContext, isModalOpen, type InboxListAction } from '../shortcuts/contexts';
+import { isEditingText } from '@shortcutkit/dom';
 import { useRegistrySnapshot, useShortcutContext } from '@shortcutkit/react';
 import { SnoozeDialog } from '../snooze/SnoozeDialog';
 import { Banners } from './Banners';
@@ -49,16 +50,18 @@ import { clearSelect, hasSelectMark, markPaint, markSelect } from './perfMarks';
 import { ReadingPane } from './ReadingPane';
 import { effectiveViewport, ROW_HEIGHT, scrollToShow } from './rowWindow';
 import { SearchBox } from './SearchBox';
-import { SessionList } from './SessionList';
+import { SessionList, type RowGesture } from './SessionList';
 import { SplitTabs } from './SplitTabs';
 import { StatusBar } from './StatusBar';
 import type { InboxController } from './useInbox';
 import { useMarks } from './useMarks';
+import { targetRows, type Cursor, type ShownRows } from './marks';
+import { useStableCallback } from './useStableCallback';
 import { usePresenceInstall } from './usePresenceInstall';
 import { useTails } from './useTails';
-import { actionTargets, scopeProject, triageChoice } from './targets';
+import { scopeProject, triageChoice } from './targets';
 import { useTriageHandoff } from './useTriageHandoff';
-import { inScope, scopeNoun, sameScope, type Scope, type SidebarView } from './scope';
+import { inScope, scopeKey, scopeNoun, sameScope, type Scope, type SidebarView } from './scope';
 import { Sidebar } from './Sidebar';
 import { resolvePeriod, type SidebarEntry } from './sidebarGroups';
 import { sidebarColumns } from './sidebarWidth';
@@ -77,7 +80,10 @@ export interface InboxViewProps {
 interface View {
   readonly selectedId: string | null;
   readonly scrollTop: number;
+  readonly anchored: boolean;
 }
+
+type Motion = 'move' | 'extend';
 
 interface PendingConfirm {
   readonly action: ConfirmedAction;
@@ -91,7 +97,7 @@ const SIDEBAR_ACTION_VIEWS = {
   sidebarTree: 'tree',
   sidebarDates: 'dates',
 } as const satisfies Partial<Record<InboxListAction, SidebarView>>;
-const INITIAL_VIEW: View = Object.freeze({ selectedId: null, scrollTop: 0 });
+const INITIAL_VIEW: View = Object.freeze({ selectedId: null, scrollTop: 0, anchored: false });
 const currentTime = () => new Date();
 
 const DECISION_FOR: Readonly<Partial<Record<InboxListAction, DecisionAction>>> = {
@@ -144,9 +150,8 @@ function reconcileView(
   const clamped = Math.min(view.scrollTop, maxTop);
   const moved = selectedId !== view.selectedId || index !== wasAt;
   const scrollTop = moved && index >= 0 ? scrollToShow(index, clamped, viewport) : clamped;
-  return selectedId === view.selectedId && scrollTop === view.scrollTop
-    ? view
-    : { selectedId, scrollTop };
+  if (selectedId === view.selectedId && scrollTop === view.scrollTop) return view;
+  return { selectedId, scrollTop, anchored: view.anchored && selectedId === view.selectedId };
 }
 
 function nextSplit(split: Split, delta: number): Split {
@@ -202,7 +207,11 @@ export function InboxView({
     [inSplit, scope, query, index],
   );
   const shownPositions = useMemo(() => positions(shown), [shown]);
-  const marks = useMarks(shown, shownPositions);
+  const shownRows = useMemo(
+    (): ShownRows => ({ rows: shown, positions: shownPositions }),
+    [shown, shownPositions],
+  );
+  const marks = useMarks(shownRows, `${split}|${scopeKey(scope)}`);
   const { markedRows } = marks;
   const counts = useMemo(
     () => splitCounts(filterByScope(rows, scope, index)),
@@ -258,6 +267,12 @@ export function InboxView({
 
   const selectedIndex = view.selectedId === null ? undefined : shownPositions.get(view.selectedId);
   const selectedRow = selectedIndex === undefined ? null : (shown[selectedIndex] ?? null);
+  const { selectedId: cursorId, anchored } = view;
+  const chosen = useMemo(
+    () => targetRows(markedRows, marks.state, { id: cursorId, anchored }, selectedRow),
+    [markedRows, marks.state, cursorId, anchored, selectedRow],
+  );
+  const chosenIds = useMemo(() => new Set(chosen.map((row) => row.id)), [chosen]);
   const tail = useTails(api, shown, shownPositions, selectedRow, list?.sessions ?? null);
   const conversation = useMemo(
     () =>
@@ -281,9 +296,17 @@ export function InboxView({
 
   const onSelect = useCallback(
     (id: string) =>
-      setView((current) => (current.selectedId === id ? current : { ...current, selectedId: id })),
+      setView((current) =>
+        current.selectedId === id ? current : { ...current, selectedId: id, anchored: false },
+      ),
     [],
   );
+  const placeCursor = (id: string) =>
+    setView((current) =>
+      current.selectedId === id && current.anchored
+        ? current
+        : { ...current, selectedId: id, anchored: true },
+    );
   const onScroll = useCallback(
     (scrollTop: number) =>
       setView((current) => (current.scrollTop === scrollTop ? current : { ...current, scrollTop })),
@@ -293,14 +316,12 @@ export function InboxView({
     viewportRef.current = height;
     setViewport(height);
   }, []);
-  const clearMarks = marks.clear;
   const updateScopes = sidebar.updateAll;
   const changeSplit = useCallback(
     (next: Split) => {
       if (next === split) return;
       setSplit(next);
       setView(INITIAL_VIEW);
-      clearMarks();
       const nextRows = splitRows(rows, next, index);
       updateScopes((current) => {
         const live = current === null ? null : resolvePeriod(current, nowMs);
@@ -309,7 +330,7 @@ export function InboxView({
           : null;
       });
     },
-    [split, rows, index, nowMs, clearMarks, updateScopes],
+    [split, rows, index, nowMs, updateScopes],
   );
   const inCurrentView = (row: SessionRow): boolean =>
     narrowRows(splitRows([row], split, index), scope, query, index).length > 0;
@@ -331,29 +352,43 @@ export function InboxView({
     };
   }, [selectedId]);
 
-  const move = (delta: number) => {
+  const moveTo = (pick: (at: number | undefined, count: number) => number, motion: Motion) => {
     const rowsNow = shownRef.current;
     if (rowsNow.length === 0) return;
     const current = viewRef.current;
     const at =
       current.selectedId === null ? undefined : positionsRef.current.get(current.selectedId);
-    const target = Math.min(Math.max(at === undefined ? 0 : at + delta, 0), rowsNow.length - 1);
+    const target = Math.min(Math.max(pick(at, rowsNow.length), 0), rowsNow.length - 1);
     const row = rowsNow[target];
     if (row === undefined || row.id === current.selectedId) return;
+    if (motion === 'extend') {
+      marks.extendTo(row.id, { id: current.selectedId, anchored: current.anchored });
+    }
     const next = {
       selectedId: row.id,
       scrollTop: scrollToShow(target, current.scrollTop, viewportRef.current),
+      anchored: motion === 'extend',
     };
     viewRef.current = next;
     setView(next);
     markSelect(row.id);
   };
+  const move = (delta: number, motion: Motion) =>
+    moveTo((at) => (at === undefined ? 0 : at + delta), motion);
+  const moveToEdge = (edge: 'first' | 'last', motion: Motion) =>
+    moveTo((_, count) => (edge === 'first' ? 0 : count - 1), motion);
 
-  const selectedNow = (): SessionRow | null => {
-    const id = viewRef.current.selectedId;
+  const shownRow = (id: string | null): SessionRow | null => {
     const at = id === null ? undefined : positionsRef.current.get(id);
     return at === undefined ? null : (shownRef.current[at] ?? null);
   };
+  const cursorNow = (): Cursor => ({
+    id: viewRef.current.selectedId,
+    anchored: viewRef.current.anchored,
+  });
+  const selectedNow = (): SessionRow | null => shownRow(viewRef.current.selectedId);
+  const targetsNow = (): readonly SessionRow[] =>
+    targetRows(markedRows, marks.state, cursorNow(), selectedNow());
 
   const resume = (row: SessionRow) => {
     api.resume(row.id).then(
@@ -362,11 +397,20 @@ export function InboxView({
     );
   };
 
-  const resumeRef = useRef(resume);
-  useLayoutEffect(() => {
-    resumeRef.current = resume;
+  const onResumeRow = useStableCallback(resume);
+
+  const onPointer = useStableCallback((id: string, gesture: RowGesture) => {
+    if (gesture === 'open') {
+      const row = shownRow(id);
+      if (row !== null) resume(row);
+      return;
+    }
+    const cursor = cursorNow();
+    if (gesture === 'only') marks.selectOnly(id);
+    else if (gesture === 'toggle') marks.toggleRow(id, cursor);
+    else marks.extendTo(id, cursor);
+    placeCursor(id);
   });
-  const onResumeRow = useCallback((row: SessionRow) => resumeRef.current(row), []);
 
   const goTo = (target: Scope) => {
     changeSplit('all');
@@ -374,7 +418,7 @@ export function InboxView({
     setView(INITIAL_VIEW);
   };
 
-  const onStep = (step: NextStep) => {
+  const onStep = useStableCallback((step: NextStep) => {
     switch (step.kind) {
       case 'woke':
       case 'recent':
@@ -399,12 +443,7 @@ export function InboxView({
       case 'roundup':
         return;
     }
-  };
-  const onStepRef = useRef(onStep);
-  useLayoutEffect(() => {
-    onStepRef.current = onStep;
   });
-  const onStepStable = useCallback((step: NextStep) => onStepRef.current(step), []);
 
   const back = () => {
     const input = searchRef.current;
@@ -414,7 +453,8 @@ export function InboxView({
       listRef.current?.focus();
       return;
     }
-    if (query !== '') setQuery('');
+    if (markedRows.length > 0) marks.clear();
+    else if (query !== '') setQuery('');
     else if (scope !== null) sidebar.clear();
   };
 
@@ -429,7 +469,9 @@ export function InboxView({
       unlessBlocked(() => setSnoozeTargets(targets));
       return;
     }
-    if (targets.length > 1 && isConfirmedAction(decision)) {
+    const offCursor = targets.some((row) => row.id !== viewRef.current.selectedId);
+    const refused = decision === 'harvest' && targets.length > 1;
+    if (offCursor && !refused && isConfirmedAction(decision)) {
       unlessBlocked(() => setPendingConfirm({ action: decision, rows: targets }));
       return;
     }
@@ -455,11 +497,35 @@ export function InboxView({
   const onAction = (action: InboxListAction) => {
     switch (action) {
       case 'next':
-        move(1);
+        move(1, 'move');
         return;
       case 'previous':
-        move(-1);
+        move(-1, 'move');
         return;
+      case 'extendDown':
+        move(1, 'extend');
+        return;
+      case 'extendUp':
+        move(-1, 'extend');
+        return;
+      case 'first':
+      case 'last':
+        moveToEdge(action, 'move');
+        return;
+      case 'extendToFirst':
+        moveToEdge('first', 'extend');
+        return;
+      case 'extendToLast':
+        moveToEdge('last', 'extend');
+        return;
+      case 'selectAll': {
+        const focused = document.activeElement;
+        if (!isEditingText(focused)) marks.selectAll();
+        else if (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement) {
+          focused.select();
+        }
+        return;
+      }
       case 'undo': {
         const newest = controller.undo().at(-1);
         if (newest !== undefined && inCurrentView(newest.row)) onSelect(newest.row.id);
@@ -486,18 +552,18 @@ export function InboxView({
       case 'sidebarDates':
         sidebar.showView(SIDEBAR_ACTION_VIEWS[action]);
         return;
-      case 'markAll':
-        marks.toggleAll(shownRef.current);
+      case 'toggleAll':
+        marks.toggleAll();
         return;
-      case 'mark': {
+      case 'toggleCurrent': {
         const row = selectedNow();
-        if (row !== null) marks.toggle(row.id);
+        if (row !== null) marks.toggleMark(row.id);
         return;
       }
       default:
         break;
     }
-    const targets = actionTargets(markedRows, selectedNow());
+    const targets = targetsNow();
     if (action === 'triageWithAgent') {
       triageTargets(targets);
       return;
@@ -523,7 +589,7 @@ export function InboxView({
         <SearchBox query={query} onQuery={setQuery} onDone={onSearchDone} inputRef={searchRef} />
         {markedRows.length > 0 && (
           <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-xs">
-            {markedRows.length} marked
+            {markedRows.length} selected
           </span>
         )}
         {controller.listStale && (
@@ -546,7 +612,7 @@ export function InboxView({
         loadError={loadError === null ? null : loadError.message}
         onRetry={controller.refresh}
       />
-      {stepContext !== null && <NextSteps context={stepContext} onStep={onStepStable} />}
+      {stepContext !== null && <NextSteps context={stepContext} onStep={onStep} />}
       <div
         ref={gridRef}
         className="grid min-h-0 flex-1"
@@ -577,13 +643,13 @@ export function InboxView({
           ) : (
             <SessionList
               rows={shown}
-              selectedId={view.selectedId}
-              marks={marks.marks}
+              cursorId={view.selectedId}
+              selection={chosenIds}
               scrollTop={view.scrollTop}
               viewport={viewport}
               onScroll={onScroll}
               onResize={onResize}
-              onSelect={onSelect}
+              onPointer={onPointer}
               listRef={listRef}
               empty={emptyText(split, list.recent_days, query, scope, following, inSplit.length)}
             />

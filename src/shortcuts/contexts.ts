@@ -24,6 +24,18 @@ export const inboxListContext = defineContext({
   actions: {
     next: { displayName: 'Next session', defaults: ['j', 'down'] },
     previous: { displayName: 'Previous session', defaults: ['k', 'up'] },
+    first: { displayName: 'First session', defaults: 'home' },
+    last: { displayName: 'Last session', defaults: 'end' },
+    extendDown: { displayName: 'Extend the selection down', defaults: ['shift+j', 'shift+down'] },
+    extendUp: { displayName: 'Extend the selection up', defaults: ['shift+k', 'shift+up'] },
+    extendToFirst: {
+      displayName: 'Extend the selection to the first session',
+      defaults: 'shift+home',
+    },
+    extendToLast: {
+      displayName: 'Extend the selection to the last session',
+      defaults: 'shift+end',
+    },
     harvestArchive: { displayName: 'Harvest, then archive', defaults: 'e', allowsKeyRepeat: false },
     archive: {
       displayName: 'Archive without harvesting',
@@ -41,8 +53,13 @@ export const inboxListContext = defineContext({
       allowsKeyRepeat: false,
     },
     undo: { displayName: 'Undo', defaults: 'z', allowsKeyRepeat: false },
-    mark: { displayName: 'Mark or unmark', defaults: 'x' },
-    markAll: { displayName: 'Mark or unmark all', defaults: 'shift+8', allowsKeyRepeat: false },
+    toggleCurrent: { displayName: 'Select or deselect', defaults: 'x' },
+    toggleAll: {
+      displayName: 'Select or deselect all',
+      defaults: 'shift+8',
+      allowsKeyRepeat: false,
+    },
+    selectAll: { displayName: 'Select all', defaults: 'mod+a', allowsKeyRepeat: false },
     search: { displayName: 'Search', defaults: 'slash' },
     back: { displayName: 'Back', defaults: 'escape' },
     nextSplit: { displayName: 'Next split', defaults: 'tab' },

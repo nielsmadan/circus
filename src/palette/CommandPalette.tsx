@@ -46,6 +46,12 @@ function paletteItems(bindings: KeyBindings, query: string): PaletteItem[] {
   );
 }
 
+function returnFocus(opener: Element | null): void {
+  if (opener instanceof HTMLElement && opener !== document.body && opener.isConnected) {
+    opener.focus();
+  }
+}
+
 const OWNED_KEYS: ReadonlySet<string> = new Set(['ArrowDown', 'ArrowUp', 'Enter', 'Tab']);
 
 export function CommandPalette(props: PaletteProps): ReactElement | null {
@@ -60,12 +66,13 @@ function PaletteBody({ onClose }: { readonly onClose: () => void }): ReactElemen
   const [highlight, setHighlight] = useState(0);
   const [opener] = useState(() => document.activeElement);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const node = dialogRef.current;
     return () => {
       if (node?.isConnected) return;
       const focusLost = document.activeElement === null || document.activeElement === document.body;
-      if (focusLost && opener instanceof HTMLElement && opener.isConnected) opener.focus();
+      if (focusLost) returnFocus(opener);
     };
   }, [opener]);
   const items = paletteItems(registry.activeBindings(), query);
@@ -73,6 +80,8 @@ function PaletteBody({ onClose }: { readonly onClose: () => void }): ReactElemen
 
   const run = (item: PaletteItem | undefined) => {
     if (!item) return;
+    inputRef.current?.blur();
+    returnFocus(opener);
     registry.dispatchRef({ contextId: item.entry.contextId, actionId: item.entry.actionId });
     onClose();
   };
@@ -106,6 +115,7 @@ function PaletteBody({ onClose }: { readonly onClose: () => void }): ReactElemen
         className="w-[32rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border bg-white shadow-xl dark:bg-neutral-900"
       >
         <input
+          ref={inputRef}
           type="text"
           aria-label="Search commands"
           placeholder="Type a command…"

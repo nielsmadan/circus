@@ -390,12 +390,12 @@ describe('bulk confirmation', () => {
     });
   });
 
-  it('asks only before archiving or deleting', () => {
+  it('asks before harvesting, archiving or deleting', () => {
     expect(
       (['harvest', 'archive', 'delete', 'snooze', 'keep', 'keep_going'] as const).filter(
         isConfirmedAction,
       ),
-    ).toEqual(['archive', 'delete']);
+    ).toEqual(['harvest', 'archive', 'delete']);
   });
 });
 

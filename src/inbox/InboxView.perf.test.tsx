@@ -18,10 +18,10 @@ const settle = async () => {
   for (let i = 0; i < 5; i += 1) await act(async () => {});
 };
 
-function press(code: string) {
+function press(code: string, init: KeyboardEventInit = {}) {
   act(() => {
     document.body.dispatchEvent(
-      new KeyboardEvent('keydown', { code, bubbles: true, cancelable: true }),
+      new KeyboardEvent('keydown', { code, bubbles: true, cancelable: true, ...init }),
     );
   });
 }
@@ -31,7 +31,37 @@ const selectedIds = () =>
     .getAllByRole('option', { selected: true })
     .map((option) => option.dataset.rowId);
 
+async function renderAll(renders: string[]) {
+  const api = createFakeApi(makeList(syntheticRows(5000, Date.UTC(2026, 9, 16, 12))));
+  render(
+    <RowRenderProbe.Provider value={(id) => renders.push(id)}>
+      <ShortcutKitProvider registry={harness.registry}>
+        <App api={api} />
+      </ShortcutKitProvider>
+    </RowRenderProbe.Provider>,
+  );
+  await settle();
+  press('Tab');
+  press('Tab');
+  await settle();
+}
+
 describe('InboxView re-render budget', () => {
+  it('re-renders at most 3 rows for one j while several rows are selected', async () => {
+    const renders: string[] = [];
+    await renderAll(renders);
+    press('KeyJ', { shiftKey: true });
+    press('KeyJ', { shiftKey: true });
+    press('KeyJ', { shiftKey: true });
+    expect(selectedIds()).toHaveLength(4);
+
+    renders.length = 0;
+    press('KeyJ');
+
+    expect(selectedIds()).toHaveLength(4);
+    expect(renders.length).toBeLessThanOrEqual(3);
+  });
+
   it('re-renders at most 3 rows for one j over 5 000 rows', async () => {
     const api = createFakeApi(makeList(syntheticRows(5000, Date.UTC(2026, 9, 16, 12))));
     const renders: string[] = [];

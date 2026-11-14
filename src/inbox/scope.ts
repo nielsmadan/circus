@@ -71,8 +71,12 @@ export function inScope(row: SessionRow, scope: Scope, mtimeMs: number): boolean
   }
 }
 
+export function scopeKey(scope: Scope | null): string {
+  return scope === null ? '' : `${scope.kind}:${scope.key}`;
+}
+
 export function sameScope(a: Scope | null, b: Scope | null): boolean {
-  return a === b || (a !== null && b !== null && a.kind === b.kind && a.key === b.key);
+  return a === b || scopeKey(a) === scopeKey(b);
 }
 
 export function scopeNoun(scope: Scope): string {

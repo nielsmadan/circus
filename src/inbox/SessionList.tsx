@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
+  type MouseEvent,
   type ReactElement,
   type ReactNode,
   type RefObject,
@@ -13,11 +14,18 @@ import { ROW_HEIGHT, rowWindow } from './rowWindow';
 
 export const RowRenderProbe = createContext<((id: string) => void) | null>(null);
 
+export type RowGesture = 'only' | 'toggle' | 'extend' | 'open';
+
 interface RowProps {
   readonly row: SessionRow;
   readonly selected: boolean;
-  readonly marked: boolean;
-  readonly onSelect: (id: string) => void;
+  readonly current: boolean;
+  readonly onPointer: (id: string, gesture: RowGesture) => void;
+}
+
+function gestureOf(event: MouseEvent<HTMLDivElement>): RowGesture {
+  if (event.shiftKey) return 'extend';
+  return event.metaKey ? 'toggle' : 'only';
 }
 
 const rowDomId = (id: string): string => `session-row-${id}`;
@@ -39,8 +47,8 @@ function statusStyle(status: string): string {
 const SessionRowItem = memo(function SessionRowItem({
   row,
   selected,
-  marked,
-  onSelect,
+  current,
+  onPointer,
 }: RowProps): ReactElement {
   useContext(RowRenderProbe)?.(row.id);
   const summary = row.what_it_is ?? row.last_prompt ?? '';
@@ -49,21 +57,17 @@ const SessionRowItem = memo(function SessionRowItem({
       id={rowDomId(row.id)}
       role="option"
       aria-selected={selected}
-      aria-checked={marked ? true : undefined}
       data-row-id={row.id}
-      onClick={() => onSelect(row.id)}
+      onClick={(event) => {
+        if (event.detail < 2) onPointer(row.id, gestureOf(event));
+      }}
+      onDoubleClick={() => onPointer(row.id, 'open')}
       style={{ height: ROW_HEIGHT }}
       className={`flex cursor-default flex-col justify-center gap-0.5 border-b border-neutral-200 px-3 dark:border-neutral-800 ${
-        selected ? 'bg-blue-500/15' : marked ? 'bg-blue-500/5' : 'hover:bg-neutral-500/5'
-      }`}
+        selected ? 'bg-blue-500/15' : 'hover:bg-neutral-500/5'
+      } ${current ? 'ring-1 ring-blue-500/60 ring-inset' : ''}`}
     >
       <div className="flex min-w-0 items-center gap-2">
-        {marked && (
-          <span
-            aria-hidden="true"
-            className="size-2 shrink-0 rounded-sm bg-blue-600 dark:bg-blue-400"
-          />
-        )}
         {row.running === true && (
           <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-green-500" />
         )}
@@ -92,19 +96,19 @@ const SessionRowItem = memo(function SessionRowItem({
 
 export interface SessionListProps {
   readonly rows: readonly SessionRow[];
-  readonly selectedId: string | null;
-  readonly marks: ReadonlySet<string>;
+  readonly cursorId: string | null;
+  readonly selection: ReadonlySet<string>;
   readonly scrollTop: number;
   readonly viewport: number;
   readonly onScroll: (scrollTop: number) => void;
   readonly onResize: (height: number) => void;
-  readonly onSelect: (id: string) => void;
+  readonly onPointer: (id: string, gesture: RowGesture) => void;
   readonly listRef: RefObject<HTMLDivElement | null>;
   readonly empty: ReactNode;
 }
 
 export const SessionList = memo(function SessionList(props: SessionListProps): ReactElement {
-  const { rows, selectedId, marks, scrollTop, viewport, onScroll, onResize, onSelect, listRef } =
+  const { rows, cursorId, selection, scrollTop, viewport, onScroll, onResize, onPointer, listRef } =
     props;
 
   useLayoutEffect(() => {
@@ -124,30 +128,36 @@ export const SessionList = memo(function SessionList(props: SessionListProps): R
   }, [listRef, onResize]);
 
   const span = rowWindow(scrollTop, viewport, rows.length);
+  const windowRows = rows.slice(span.start, span.end);
+  const cursorShown = windowRows.some((row) => row.id === cursorId);
   return (
     <div
       ref={listRef}
       role="listbox"
       aria-label="Sessions"
-      aria-activedescendant={selectedId === null ? undefined : rowDomId(selectedId)}
+      aria-multiselectable="true"
+      aria-activedescendant={cursorShown && cursorId !== null ? rowDomId(cursorId) : undefined}
       tabIndex={0}
       onScroll={(event) => onScroll(event.currentTarget.scrollTop)}
-      className="h-full min-h-0 overflow-y-auto outline-none"
+      className="h-full min-h-0 overflow-y-auto outline-none select-none"
     >
       {rows.length === 0 ? (
         <div className="p-6 text-center text-sm opacity-60">{props.empty}</div>
       ) : (
         <>
           <div aria-hidden="true" style={{ height: span.padTop }} />
-          {rows.slice(span.start, span.end).map((row) => (
-            <SessionRowItem
-              key={row.id}
-              row={row}
-              selected={row.id === selectedId}
-              marked={marks.has(row.id)}
-              onSelect={onSelect}
-            />
-          ))}
+          {windowRows.map((row) => {
+            const selected = selection.has(row.id);
+            return (
+              <SessionRowItem
+                key={row.id}
+                row={row}
+                selected={selected}
+                current={row.id === cursorId && (selection.size > 1 || !selected)}
+                onPointer={onPointer}
+              />
+            );
+          })}
           <div aria-hidden="true" style={{ height: span.padBottom }} />
         </>
       )}

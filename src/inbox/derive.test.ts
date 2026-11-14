@@ -240,11 +240,22 @@ describe('positions and nextSelection', () => {
     );
   });
 
+  it('moves to the first remaining row after the selected one when several rows go', () => {
+    const [r3, r4] = [makeRow({ id: 'claude-code:3' }), makeRow({ id: 'claude-code:4' })];
+    expect(nextSelection([r0, r1, r2, r3, r4], [r0, r3, r4], r2.id)).toBe(r3.id);
+  });
+
   it('keeps the selected id while it is still shown', () => {
     expect(nextSelection([r0, r1, r2], [r1, r2], r2.id)).toBe(r2.id);
   });
 
-  it('moves to the row now at the same index after removal', () => {
+  it('falls back to the first row when the selected row was never shown', () => {
+    const gone = makeRow({ id: 'claude-code:r0' });
+    const fresh = makeRow({ id: 'claude-code:r1' });
+    expect(nextSelection([gone], [fresh], 'claude-code:gone')).toBe(fresh.id);
+  });
+
+  it('moves to the next remaining row after a single removal', () => {
     expect(nextSelection([r0, r1, r2], [r0, r2], r1.id)).toBe(r2.id);
   });
 

@@ -226,12 +226,12 @@ export function nextSelection(
   const last = after.length - 1;
   if (last < 0) return null;
   if (selectedId === null) return after[0]?.id ?? null;
-  if (after.some((row) => row.id === selectedId)) return selectedId;
-  const previous = Math.max(
-    0,
-    before.findIndex((row) => row.id === selectedId),
-  );
-  return after[Math.min(previous, last)]?.id ?? null;
+  const kept = new Set(after.map((row) => row.id));
+  if (kept.has(selectedId)) return selectedId;
+  const previous = before.findIndex((row) => row.id === selectedId);
+  if (previous < 0) return after[0]?.id ?? null;
+  const following = before.slice(previous + 1).find((row) => kept.has(row.id));
+  return following?.id ?? after[Math.min(previous, last)]?.id ?? null;
 }
 
 const GUARDED_ACTIONS: ReadonlySet<DecisionAction> = new Set(['archive', 'delete', 'harvest']);

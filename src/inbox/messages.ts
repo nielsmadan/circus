@@ -147,13 +147,13 @@ export const alreadyPendingManyToast = (count: number): ToastSpec =>
   toast('info', `${sessions(count)} already ${count === 1 ? 'has' : 'have'} a pending change`);
 
 export const oneHarvestToast = (): ToastSpec =>
-  toast('warning', 'Harvest one session at a time — unmark all but one');
+  toast('warning', 'Harvest one session at a time — deselect all but one');
 
 export const oneResumeToast = (): ToastSpec =>
-  toast('warning', 'Resume one session at a time — unmark all but one');
+  toast('warning', 'Resume one session at a time — deselect all but one');
 
 export const oneProjectToast = (): ToastSpec =>
-  toast('warning', 'The marked sessions are in several projects — triage one project at a time');
+  toast('warning', 'The selected sessions are in several projects — triage one project at a time');
 
 export const rescanQueuedToast = (): ToastSpec => toast('info', 'Rescan queued');
 
@@ -311,10 +311,10 @@ export const presenceOffToast = (detail: string): ToastSpec =>
     detail,
   );
 
-export type ConfirmedAction = 'archive' | 'delete';
+export type ConfirmedAction = 'archive' | 'delete' | 'harvest';
 
 export function isConfirmedAction(action: DecisionAction): action is ConfirmedAction {
-  return action === 'archive' || action === 'delete';
+  return action === 'archive' || action === 'delete' || action === 'harvest';
 }
 
 export interface ConfirmText {
@@ -338,6 +338,13 @@ export function bulkConfirmText(action: ConfirmedAction, count: number): Confirm
         title: `Archive ${sessions(count)}?`,
         detail: null,
         confirmLabel: `Archive ${count}`,
+        tone: 'normal',
+      };
+    case 'harvest':
+      return {
+        title: `Harvest and archive ${sessions(count)}?`,
+        detail: null,
+        confirmLabel: `Harvest ${count}`,
         tone: 'normal',
       };
   }
