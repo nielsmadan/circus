@@ -31,7 +31,7 @@ import {
   SPLITS,
   type Split,
 } from './derive';
-import { InFlight, WakingSoon } from './HomeLists';
+import { WakingSoon } from './HomeLists';
 import {
   blockedToast,
   bulkConfirmText,
@@ -231,7 +231,6 @@ export function InboxView({
   );
   const byId = useMemo(() => rowsById(list), [list]);
   const home = list?.home ?? null;
-  const inFlight = useMemo(() => pick(home?.in_flight ?? [], byId), [home, byId]);
   const wakingSoon = useMemo(() => pick(home?.waking_soon ?? [], byId), [home, byId]);
   const allProjects = useMemo(
     () => new Map(projectCounts(rows, index).map((project) => [project.key, project])),
@@ -396,8 +395,6 @@ export function InboxView({
       (error: unknown) => notify(resumeFailedToast(row.label, errorDetail(toCircusError(error)))),
     );
   };
-
-  const onResumeRow = useStableCallback(resume);
 
   const onPointer = useStableCallback((id: string, gesture: RowGesture) => {
     if (gesture === 'open') {
@@ -630,7 +627,6 @@ export function InboxView({
               treeChoices={sidebar.treeChoices}
               onTreeOpen={sidebar.setTreeOpen}
             />
-            <InFlight rows={inFlight} onResume={onResumeRow} />
             <WakingSoon rows={wakingSoon} now={list?.generated_at ?? ''} />
           </div>
           <Splitter width={sidebarWidth} onPreview={onPreviewWidth} onCommit={setSidebarWidth} />

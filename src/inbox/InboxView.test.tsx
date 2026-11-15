@@ -843,12 +843,8 @@ describe('InboxView next steps and sidebar', () => {
     expect(within(strip()).getByText('All caught up')).toBeVisible();
   });
 
-  it('lists in-flight sessions that resume on click and the sessions waking soon', async () => {
+  it('lists the sessions waking soon', async () => {
     await renderInbox(withHome());
-    const inFlight = screen.getByRole('region', { name: 'In flight' });
-    click(within(inFlight).getByRole('button', { name: /fix flaky login/ }));
-    await flush();
-    expect(api.calls.filter((c) => c.method === 'resume').map((c) => c.args)).toEqual([[login.id]]);
     const waking = screen.getByRole('region', { name: 'Waking soon' });
     expect(within(waking).getByRole('listitem')).toHaveTextContent('wait for reviewin 2d');
   });
