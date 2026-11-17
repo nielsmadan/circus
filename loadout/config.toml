@@ -1,0 +1,3 @@
+harnesses = ["claude", "codex"]
+instructions = ["main"]
+kits = ["typescript", "rust", "macos-vm"]

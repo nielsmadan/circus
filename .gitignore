@@ -7,3 +7,14 @@ src-tauri/gen/schemas/
 .DS_Store
 *.tsbuildinfo
 .cache/
+/AGENTS.md
+/CLAUDE.md
+/.claude/settings.json
+/.claude/skills/macos-vm/
+/.agents/skills/macos-vm/
+/.claude/skills/codebase-review-typescript/
+/.agents/skills/codebase-review-typescript/
+/.claude/skills/review-rust/
+/.agents/skills/review-rust/
+/.claude/skills/review-typescript/
+/.agents/skills/review-typescript/
