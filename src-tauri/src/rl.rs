@@ -24,8 +24,8 @@ const CONTRACT_VERSION: u64 = 1;
 const EMPTY_TAILS: &[u8] = br#"{"version":1,"kind":"tails","items":[]}"#;
 const RL_TOO_OLD: &str = "The installed ringleader is too old for Circus";
 const CONTRACT_COMMANDS: &[&str] = &[
-    "inbox", "data", "export", "session", "archive", "delete", "harvest", "snooze", "keep", "mark",
-    "reviewed", "handoff", "triage",
+    "inbox", "data", "export", "session", "archive", "delete", "harvest", "snooze", "keep",
+    "unkeep", "mark", "reviewed", "handoff", "triage",
 ];
 
 pub fn valid_session_id(id: &str) -> bool {
@@ -147,6 +147,7 @@ pub fn decide_args(req: &DecideRequest) -> Result<Vec<String>, CircusError> {
         DecisionAction::Snooze => &["session", "snooze"],
         DecisionAction::Keep => &["session", "keep"],
         DecisionAction::KeepGoing => &["session", "mark", "reviewed"],
+        DecisionAction::Unkeep => &["session", "unkeep"],
     };
     let archive = (req.action == DecisionAction::Harvest).then(|| "--archive".to_string());
     let fingerprint = req
@@ -624,7 +625,7 @@ mod tests {
     #[test]
     fn decide_args_name_the_guarded_session_verb_for_each_action() {
         let mtime = "2026-10-16T09:00:00+00:00";
-        let expected: [(DecisionAction, &[&str]); 6] = [
+        let expected: [(DecisionAction, &[&str]); 7] = [
             (DecisionAction::Archive, &["session", "archive", "codex:b"]),
             (DecisionAction::Delete, &["session", "delete", "codex:b"]),
             (
@@ -637,6 +638,7 @@ mod tests {
                 &["session", "mark", "reviewed", "codex:b"],
             ),
             (DecisionAction::Snooze, &["session", "snooze", "codex:b"]),
+            (DecisionAction::Unkeep, &["session", "unkeep", "codex:b"]),
         ];
         for (action, head) in expected {
             let mut req = decide_req(action, "codex:b", mtime);
@@ -880,6 +882,7 @@ mod tests {
             DecisionAction::Snooze,
             DecisionAction::Keep,
             DecisionAction::KeepGoing,
+            DecisionAction::Unkeep,
         ];
         let mut argvs = vec![
             list_args(),
@@ -895,7 +898,8 @@ mod tests {
                 | DecisionAction::Delete
                 | DecisionAction::Snooze
                 | DecisionAction::Keep
-                | DecisionAction::KeepGoing => {}
+                | DecisionAction::KeepGoing
+                | DecisionAction::Unkeep => {}
             }
             let mut req = decide_req(action, id, "2026-10-16T09:00:00+00:00");
             if action == DecisionAction::Snooze {

@@ -25,9 +25,9 @@ The world is rebuilt on every launch, so a sandbox launch starts without a list 
 
 ## The fake harness
 
-`pnpm dev:fake` serves the whole Inbox in a plain browser over the in-memory API in `src/dev/memoryApi.ts`: list, reading pane, all six decisions with undo, multi-selection and bulk decisions, snooze dialog, next steps, the `t` hand-off, dry-run resume toast, ⌘K palette, and the setup screen. No Tauri, no `rl`. It is what agent-browser drives.
+`pnpm dev:fake` serves the whole Inbox in a plain browser over the in-memory API in `src/dev/memoryApi.ts`: list, reading pane, the Kept split, all seven decisions with undo, multi-selection and bulk decisions, snooze dialog, next steps, the `t` hand-off, dry-run resume toast, ⌘K palette, and the setup screen. No Tauri, no `rl`. It is what agent-browser drives.
 
-The fake decides as the guarded `rl session` verbs do, so QA in the harness sees real outcomes: archive, delete and harvest are refused without a five-field numeric fingerprint (the synthetic rows carry real-shaped ones), then for a lifecycle block (`cannot <action> …`), a session that left the registry or a changed `mtime`, then for a running or presence-unknown session, in that order; keep and keep going on a missing session are `failed`; a snooze without `until` is rejected as `invalid_argument` the way Rust rejects it, and an unparsable, offset-less or past `until` is refused.
+The fake decides as the guarded `rl session` verbs do, so QA in the harness sees real outcomes: archive, delete and harvest are refused without a five-field numeric fingerprint (the synthetic rows carry real-shaped ones), then for a lifecycle block (`cannot <action> …`), a session that left the registry or a changed `mtime`, then for a running or presence-unknown session, in that order; keep, keep going and unkeep on a missing session are `failed`; keep moves a session into `kept` and unkeep moves it back, clearing its snooze and reviewed mark, while unkeep of a session that is not kept is `ok` with `wrote: false`; every 50th synthetic session starts kept; a snooze without `until` is rejected as `invalid_argument` the way Rust rejects it, and an unparsable, offset-less or past `until` is refused.
 
 Home is `/u`, and the synthetic projects use five folder layouts so every sidebar view has something to show: repos cloned twice (`/u/wrksp/proj-NN/dev1`, `dev2`), packages of one monorepo (`/u/wrksp/mono/packages/proj-NN`), plain local repos (`/u/work/proj-NN`), folders outside git (`/u/notes/proj-NN`) and repos outside home (`/opt/src/proj-NN`); about one session in a hundred has no folder.
 
@@ -44,6 +44,7 @@ QA each Inbox behavior in the harness:
 - keys `j`/`k`/arrows, `/` search, Tab and ⇧Tab splits, `Esc` back;
 - the sidebar's Repos, Folders, Tree and Dates tabs (selection per tab, an emptied selection offering the next entry), dragging, arrow-stepping and double-clicking its divider;
 - `e`, ⇧E, `#`, `h` (dialog: typed text, picker, presets, ⌘Enter), `s`, `r`, each followed by `z` within the window, and again after the window to see the row stay hidden;
+- the Kept split: a row kept with `s` appears there newest first; `u` (and the reading pane's Return to inbox) sends it back to Recent/All, `z` undoes; `u` on an inbox row and `h`/`s`/`r` on a kept row are refused with a toast;
 - `o` / Enter: dry-run toast;
 - selection: click, ⌘-click (and ⌘-click deselecting the last row), ⇧-click, ⇧J/⇧K and ⇧↓/⇧↑, Home/End and ⇧Home/⇧End, ⌘A in the list and in the search box or palette, Esc clearing the selection first, double-click resuming; `x` selects, ⇧8 selects all; a decision on several rows: confirm dialog for archive/delete, one batch toast, `z` undoes the unsent members;
 - `t`: agent picker with several agents, dry-run hand-off toast; next-steps strip buttons;

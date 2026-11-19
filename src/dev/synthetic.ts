@@ -1,4 +1,4 @@
-import type { SessionRow } from '../api/types';
+import type { Badge, ListResponse, SessionRow } from '../api/types';
 
 const DAY_MS = 86_400_000;
 const SPAN_DAYS = 60;
@@ -209,4 +209,43 @@ export function syntheticRows(count: number, nowMs: number): SessionRow[] {
     null,
   );
   return drafts.map((d) => toRow(d, nowMs, d === newest));
+}
+
+export type FakeWorld = Required<Pick<ListResponse, 'sessions' | 'kept'>>;
+
+function withoutBadges(row: SessionRow, ...badges: readonly Badge[]): Badge[] {
+  return row.badges.filter((each) => !badges.includes(each));
+}
+
+export function keptRow(row: SessionRow, keptAt: string): SessionRow {
+  return {
+    ...row,
+    decision: 'keep',
+    kept_at: keptAt,
+    woke: false,
+    badges: [...withoutBadges(row, 'kept'), 'kept'],
+  };
+}
+
+export function unkeptRow(row: SessionRow): SessionRow {
+  return {
+    ...row,
+    decision: null,
+    kept_at: null,
+    reviewed_at_mtime: null,
+    snoozed_at: null,
+    snoozed_until: null,
+    woke: false,
+    badges: withoutBadges(row, 'kept', 'snoozed'),
+  };
+}
+
+export function keepEvery(rows: readonly SessionRow[], every: number, nowMs: number): FakeWorld {
+  const keptAt = (row: SessionRow) => isoSeconds(Math.min(nowMs, Date.parse(row.mtime) + DAY_MS));
+  return {
+    sessions: rows.filter((_, index) => index % every !== every - 1),
+    kept: rows
+      .filter((_, index) => index % every === every - 1)
+      .map((row) => keptRow(row, keptAt(row))),
+  };
 }

@@ -30,6 +30,15 @@ fn sessions(list: &Value) -> Vec<Value> {
     list["sessions"].as_array().expect("sessions array").clone()
 }
 
+fn row_ids(list: &Value, key: &str) -> Vec<String> {
+    list[key]
+        .as_array()
+        .unwrap_or_else(|| panic!("{key} array"))
+        .iter()
+        .map(|row| text(row, "id"))
+        .collect()
+}
+
 fn text(value: &Value, key: &str) -> String {
     value[key]
         .as_str()
@@ -167,4 +176,37 @@ fn rl_json_contract_against_the_sandbox_world() {
             .iter()
             .all(|row| row["id"] != Value::String(id.clone()))
     );
+
+    let other = idle.get(1).expect("a second non-running row");
+    let other_id = text(other, "id");
+    let decide = |action| {
+        json(
+            &rl.decide(&DecideRequest {
+                action,
+                id: other_id.clone(),
+                mtime: text(other, "mtime"),
+                fingerprint: None,
+                until: None,
+            })
+            .expect("outcome"),
+        )
+    };
+
+    let keep = decide(DecisionAction::Keep);
+    assert_eq!(keep["status"], "ok", "{keep}");
+    let kept = json(&rl.list().expect("list after keep"));
+    assert!(row_ids(&kept, "kept").contains(&other_id), "{kept}");
+    assert!(!row_ids(&kept, "sessions").contains(&other_id));
+
+    let unkeep = decide(DecisionAction::Unkeep);
+    assert_eq!(unkeep["status"], "ok", "{unkeep}");
+    assert_eq!(unkeep["action"], "unkeep", "{unkeep}");
+    assert_eq!(unkeep["wrote"], true, "{unkeep}");
+    let unkept = json(&rl.list().expect("list after unkeep"));
+    assert!(row_ids(&unkept, "sessions").contains(&other_id), "{unkept}");
+    assert!(!row_ids(&unkept, "kept").contains(&other_id));
+
+    let again = decide(DecisionAction::Unkeep);
+    assert_eq!(again["status"], "ok", "{again}");
+    assert_eq!(again["wrote"], false, "{again}");
 }

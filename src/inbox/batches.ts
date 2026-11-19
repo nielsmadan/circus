@@ -1,6 +1,6 @@
 import type { DecisionAction } from '../api/types';
 import { batchSettledToast, type ToastSpec } from './messages';
-import type { Settled } from './outbox';
+import { isNoOpUnkeep, type Settled } from './outbox';
 
 export interface BatchProgress {
   readonly action: DecisionAction;
@@ -21,7 +21,11 @@ export function startBatch(action: DecisionAction, size: number): BatchProgress 
 }
 
 export function memberEnd(settled: Settled): MemberEnd {
-  return settled.kind === 'outcome' && settled.outcome.status === 'ok' ? 'ok' : 'not_ok';
+  return settled.kind === 'outcome' &&
+    settled.outcome.status === 'ok' &&
+    !isNoOpUnkeep(settled.decision, settled.outcome)
+    ? 'ok'
+    : 'not_ok';
 }
 
 export function advanceBatch(progress: BatchProgress, end: MemberEnd): BatchAdvance {

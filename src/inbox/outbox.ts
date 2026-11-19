@@ -16,6 +16,7 @@ export const UNDO_WINDOW_MS: Readonly<Record<DecisionAction, number>> = Object.f
   snooze: 4_000,
   keep: 4_000,
   keep_going: 4_000,
+  unkeep: 4_000,
 });
 
 export const HARVEST_CONCURRENCY = 2;
@@ -317,6 +318,10 @@ export class Outbox {
   private report(error: unknown): void {
     (this.deps.onError ?? console.error)(error);
   }
+}
+
+export function isNoOpUnkeep(decision: Decision, outcome: DecideOutcome): boolean {
+  return decision.action === 'unkeep' && outcome.status === 'ok' && !outcome.wrote;
 }
 
 export function toRequest(decision: Decision): DecideRequest {

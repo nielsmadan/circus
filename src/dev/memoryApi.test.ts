@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DecideRequest, SessionRow } from '../api/types';
-import { makeList, makeRow } from '../test/fixtures';
+import { makeKeptRow, makeList, makeRow } from '../test/fixtures';
 import { createMemoryApi } from './memoryApi';
 
 const rowA = makeRow({ id: 'claude-code:a', session_id: 'a', last_prompt: 'fix the login flake' });
@@ -134,6 +134,82 @@ describe('createMemoryApi', () => {
     await vi.advanceTimersByTimeAsync(2_000);
     return pending;
   }
+
+  async function listed(api: ReturnType<typeof createMemoryApi>) {
+    const pending = api.list();
+    await vi.advanceTimersByTimeAsync(2_000);
+    return pending;
+  }
+
+  it('moves a kept row into the kept list and an unkept one back to the inbox', async () => {
+    const snoozed = makeRow({
+      id: 'claude-code:z',
+      snoozed_at: '2026-10-10T09:00:00+00:00',
+      snoozed_until: '2026-10-12T09:00:00+00:00',
+      reviewed_at_mtime: '2026-10-10T09:00:00+00:00',
+      badges: ['snoozed'],
+    });
+    const api = createMemoryApi(makeList([rowA, snoozed]), { latencyMs: 10 });
+    const keptAt = new Date(Date.now() + 10).toISOString();
+    expect(await decided(api, request(snoozed, { action: 'keep' }))).toMatchObject({
+      status: 'ok',
+      wrote: true,
+    });
+    const afterKeep = await listed(api);
+    expect(afterKeep.sessions.map((row) => row.id)).toEqual([rowA.id]);
+    expect(afterKeep.kept).toEqual([
+      expect.objectContaining({
+        id: snoozed.id,
+        decision: 'keep',
+        kept_at: keptAt,
+        badges: ['snoozed', 'kept'],
+      }),
+    ]);
+    expect(afterKeep.home?.counts.kept).toBe(1);
+
+    expect(await decided(api, request(snoozed, { action: 'unkeep' }))).toMatchObject({
+      status: 'ok',
+      action: 'unkeep',
+      wrote: true,
+    });
+    const afterUnkeep = await listed(api);
+    expect(afterUnkeep.kept).toEqual([]);
+    expect(afterUnkeep.sessions.find((row) => row.id === snoozed.id)).toMatchObject({
+      decision: null,
+      kept_at: null,
+      snoozed_at: null,
+      snoozed_until: null,
+      reviewed_at_mtime: null,
+      badges: [],
+    });
+  });
+
+  it('writes nothing when unkeeping a row that is not kept', async () => {
+    const api = createMemoryApi(seed, { latencyMs: 10 });
+    expect(await decided(api, request(rowA, { action: 'unkeep' }))).toMatchObject({
+      status: 'ok',
+      wrote: false,
+      message: `${rowA.label} is not kept`,
+    });
+  });
+
+  it('fails to unkeep a session that left the registry', async () => {
+    const api = createMemoryApi(seed, { latencyMs: 10 });
+    const gone = makeRow({ id: 'claude-code:gone' });
+    expect(await decided(api, request(gone, { action: 'unkeep' }))).toMatchObject({
+      status: 'failed',
+      code: 'gone',
+    });
+  });
+
+  it('archives a kept row out of the kept list', async () => {
+    const kept = makeKeptRow({ id: 'claude-code:k' });
+    const api = createMemoryApi(makeList([rowA], { kept: [kept] }), { latencyMs: 10 });
+    expect((await decided(api, request(kept))).status).toBe('ok');
+    const list = await listed(api);
+    expect(list.kept).toEqual([]);
+    expect(list.sessions.map((row) => row.id)).toEqual([rowA.id]);
+  });
 
   it('refuses destructive actions on a session that left the registry, and fails the rest', async () => {
     const api = createMemoryApi(seed, { latencyMs: 10 });

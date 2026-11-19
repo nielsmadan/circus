@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SESSION_ROW_KEYS } from '../api/types';
-import { syntheticRows } from './synthetic';
+import { keepEvery, syntheticRows } from './synthetic';
 
 const NOW = Date.UTC(2026, 9, 16, 12);
 
@@ -65,5 +65,21 @@ describe('syntheticRows', () => {
       git_project_key: null,
     });
     expect(rows.find((row) => row.project === null)).toMatchObject({ project_key: '(unknown)' });
+  });
+});
+
+describe('keepEvery', () => {
+  it('moves every nth row into the kept list, kept after its last activity', () => {
+    const rows = syntheticRows(10, NOW);
+    const { sessions, kept } = keepEvery(rows, 5, NOW);
+    expect(sessions.map((row) => row.id)).toEqual(
+      rows.filter((_, index) => index !== 4 && index !== 9).map((row) => row.id),
+    );
+    expect(kept.map((row) => row.id)).toEqual([rows[4]?.id, rows[9]?.id]);
+    kept.forEach((row) => {
+      expect(row).toMatchObject({ decision: 'keep', woke: false, badges: ['kept'] });
+      expect(Date.parse(row.kept_at ?? '')).toBeGreaterThanOrEqual(Date.parse(row.mtime));
+      expect(Date.parse(row.kept_at ?? '')).toBeLessThanOrEqual(NOW);
+    });
   });
 });

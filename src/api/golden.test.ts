@@ -33,11 +33,16 @@ function keysOf(value: object): string[] {
   return Object.keys(value).sort();
 }
 
+// remove each key once the pinned release's goldens carry it
+const UNRELEASED_LIST_KEYS: ReadonlySet<string> = new Set(['kept']);
+
 describe('golden documents', () => {
   it('pins the list document and every session row', () => {
     expect(listGolden.kind).toBe('list');
     expect(listGolden.version).toBe(1);
-    expect(keysOf(listGolden)).toEqual([...LIST_RESPONSE_KEYS]);
+    expect(keysOf(listGolden)).toEqual(
+      LIST_RESPONSE_KEYS.filter((key) => !UNRELEASED_LIST_KEYS.has(key)),
+    );
     expect(keysOf(listGolden.presence)).toEqual(['code', 'problem', 'state']);
     expect(keysOf(listGolden.roundup)).toEqual(['age_human', 'last_at', 'stale', 'stale_hours']);
     expect(listGolden.scan).toBeNull();

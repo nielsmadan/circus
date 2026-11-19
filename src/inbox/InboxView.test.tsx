@@ -11,7 +11,7 @@ import {
   type Deferred,
   type FakeApi,
 } from '../test/fakeApi';
-import { makeHome, makeList, makeRow, makeStep } from '../test/fixtures';
+import { makeHome, makeKeptRow, makeList, makeRow, makeStep } from '../test/fixtures';
 import { shortcutHarness, type ShortcutHarness } from '../test/shortcuts';
 import { scrollToShow } from './rowWindow';
 
@@ -262,6 +262,20 @@ describe('InboxView list and reading pane', () => {
     type(search(), 'zzz');
     expect(screen.getByText('No sessions match “zzz”')).toBeInTheDocument();
   });
+
+  it('shows a snooze in the reading pane only while one is set', async () => {
+    const stale = makeRow({ id: 'claude-code:st', snoozed_until: '2026-10-20T09:00:00+00:00' });
+    const snoozed = makeRow({
+      id: 'claude-code:sn',
+      mtime: '2026-10-09T12:00:00+00:00',
+      snoozed_at: '2026-10-11T09:00:00+00:00',
+      snoozed_until: '2026-10-20T09:00:00+00:00',
+    });
+    await renderInbox(makeList([stale, snoozed]));
+    expect(field('Parked')).toBe('—');
+    press('KeyJ');
+    expect(field('Parked')).toMatch(/^snoozed until /);
+  });
 });
 
 describe('InboxView decisions', () => {
@@ -498,6 +512,234 @@ describe('InboxView decisions', () => {
     expect(api.count('decide')).toBe(0);
     await advance(1);
     expect(decideActions()).toEqual(['archive']);
+  });
+});
+
+const keptOld = makeKeptRow({
+  id: 'claude-code:k1',
+  session_id: 'k1',
+  label: 'kept long ago',
+  mtime: '2026-07-01T12:00:00+00:00',
+  kept_at: '2026-07-02T12:00:00+00:00',
+  project: '/u/work/proj-02',
+  project_short: '…/work/proj-02',
+  project_key: '/u/work/proj-02',
+  project_label: 'proj-02',
+  file_fingerprint: 'fp-k1',
+});
+const keptNew = makeKeptRow({
+  id: 'claude-code:k2',
+  session_id: 'k2',
+  label: 'kept lately',
+  mtime: '2026-10-12T12:00:00+00:00',
+  in_recent: true,
+  kept_at: '2026-10-10T12:00:00+00:00',
+  file_fingerprint: 'fp-k2',
+});
+const repos = () => screen.getByRole('navigation', { name: 'Repos' });
+const transcript = () =>
+  [...screen.getByRole('region', { name: 'Conversation' }).querySelectorAll('pre')]
+    .map((pre) => pre.textContent)
+    .join('');
+const withKept = () => makeList(ROWS, { kept: [keptOld, keptNew] });
+const tabNames = () =>
+  within(screen.getByRole('tablist', { name: 'Splits' }))
+    .getAllByRole('tab')
+    .map((tab) => tab.textContent);
+
+async function openKept() {
+  await renderInbox(withKept());
+  click(screen.getByRole('tab', { name: /Kept/ }));
+}
+
+describe('InboxView Kept split', () => {
+  it('offers Recent, Woke and All when the list has no kept rows', async () => {
+    await renderInbox();
+    expect(tabNames()).toEqual(['Recent 3', 'Woke 2', 'All 5']);
+  });
+
+  it('cycles into Kept with tab and lists the latest kept first', async () => {
+    await renderInbox(withKept());
+    expect(tabNames()).toEqual(['Recent 3', 'Woke 2', 'All 5', 'Kept 2']);
+    press('Tab');
+    press('Tab');
+    press('Tab');
+    expect(screen.getByRole('tab', { name: /Kept 2/ })).toHaveAttribute('aria-selected', 'true');
+    expect(shownIds()).toEqual([keptNew.id, keptOld.id]);
+    expect(field('Parked')).toBe('kept since Oct 10, 2026');
+    press('Tab');
+    expect(screen.getByRole('tab', { name: /Recent/ })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('says when nothing is kept', async () => {
+    await renderInbox(makeList(ROWS, { kept: [] }));
+    click(screen.getByRole('tab', { name: /Kept 0/ }));
+    expect(screen.getByText('No kept sessions')).toBeInTheDocument();
+  });
+
+  it('returns a kept row to the inbox with u after the undo window', async () => {
+    await openKept();
+    press('KeyU');
+    expect(shownIds()).toEqual([keptOld.id]);
+    expect(screen.getByRole('tab', { name: /Kept 1/ })).toBeInTheDocument();
+    expect(screen.getByText('Return “kept lately” to the inbox')).toBeInTheDocument();
+    await advance(4_000);
+    expect(api.decideRequest(0)).toEqual({
+      action: 'unkeep',
+      id: keptNew.id,
+      mtime: keptNew.mtime,
+      fingerprint: 'fp-k2',
+      until: null,
+    });
+    await flush();
+    expect(screen.getByText('Returned “kept lately” to the inbox')).toBeInTheDocument();
+  });
+
+  it('undoes an unkeep with z and selects the kept row again', async () => {
+    await openKept();
+    press('KeyU');
+    press('KeyZ');
+    expect(shownIds()).toEqual([keptNew.id, keptOld.id]);
+    expect(selectedId()).toBe(keptNew.id);
+    expect(screen.getByText('Undid return “kept lately” to the inbox')).toBeInTheDocument();
+    await advance(4_000);
+    expect(api.count('decide')).toBe(0);
+  });
+
+  it('keeps the selection when undoing an unkeep from another split', async () => {
+    await openKept();
+    press('KeyU');
+    click(screen.getByRole('tab', { name: /Recent/ }));
+    press('KeyJ');
+    press('KeyZ');
+    expect(screen.getByText('Undid return “kept lately” to the inbox')).toBeInTheDocument();
+    expect(shownIds()).toEqual([parser.id, login.id, docs.id]);
+    expect(selectedId()).toBe(login.id);
+  });
+
+  it('returns every selected kept row under one toast', async () => {
+    await openKept();
+    press('Digit8', { shiftKey: true });
+    press('KeyU');
+    expect(screen.getByText('Return 2 sessions to the inbox')).toBeInTheDocument();
+    await advance(4_000);
+    await flush();
+    await flush();
+    expect(api.argsOf('decide').map(([request]) => [request.action, request.id])).toEqual([
+      ['unkeep', keptNew.id],
+      ['unkeep', keptOld.id],
+    ]);
+    expect(screen.getByText('Returned 2 sessions to the inbox')).toBeInTheDocument();
+  });
+
+  it('refuses to unkeep an inbox row and to snooze or keep a kept one', async () => {
+    await renderInbox(withKept());
+    press('KeyU');
+    expect(screen.getByText('fix parser isn’t kept')).toBeInTheDocument();
+    click(screen.getByRole('tab', { name: /Kept/ }));
+    press('KeyH');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    press('KeyS');
+    expect(screen.getAllByText('kept lately is already kept')).toHaveLength(2);
+    await advance(4_000);
+    expect(api.count('decide')).toBe(0);
+  });
+
+  it('archives a kept row from the Kept split', async () => {
+    await openKept();
+    press('KeyE', { shiftKey: true });
+    await advance(4_000);
+    expect(api.argsOf('decide').map(([request]) => [request.action, request.id])).toEqual([
+      ['archive', keptNew.id],
+    ]);
+  });
+
+  it('offers Return to inbox instead of the parking actions in the reading pane', async () => {
+    await openKept();
+    const buttons = () =>
+      within(pane())
+        .getAllByRole('button')
+        .map((button) => button.firstChild?.textContent);
+    expect(buttons()).toEqual([
+      'Return to inbox',
+      'Harvest & archive',
+      'Archive',
+      'Delete',
+      'Resume',
+    ]);
+    click(within(pane()).getByRole('button', { name: /Return to inbox/ }));
+    expect(screen.getByText('Return “kept lately” to the inbox')).toBeInTheDocument();
+  });
+
+  it('falls back to Recent when a later list has no kept rows', async () => {
+    await openKept();
+    api.setList(makeList(ROWS));
+    press('KeyE', { shiftKey: true });
+    await advance(4_000);
+    await flush();
+    expect(tabNames()).toEqual(['Recent 3', 'Woke 2', 'All 5']);
+    expect(screen.getByRole('tab', { name: /Recent/ })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('counts kept rows within the selected repo', async () => {
+    await renderInbox(withKept());
+    click(within(repos()).getByRole('button', { name: /proj-00/ }));
+    expect(screen.getByRole('tab', { name: /Kept/ })).toHaveTextContent('Kept 1');
+  });
+
+  it('keeps a repo selected when switching to Kept only if it has kept rows', async () => {
+    await renderInbox(withKept());
+    click(within(repos()).getByRole('button', { name: /proj-00/ }));
+    click(screen.getByRole('tab', { name: /Kept/ }));
+    expect(within(repos()).getByRole('button', { name: /proj-00/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+    expect(shownIds()).toEqual([keptNew.id]);
+    click(screen.getByRole('tab', { name: /All/ }));
+    click(within(repos()).getByRole('button', { name: /proj-01/ }));
+    click(screen.getByRole('tab', { name: /Kept/ }));
+    expect(within(repos()).getByRole('button', { name: /All repos/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+    expect(shownIds()).toEqual([keptNew.id, keptOld.id]);
+  });
+
+  it('offers the next repo with kept rows and stays in Kept on Enter', async () => {
+    await openKept();
+    click(within(repos()).getByRole('button', { name: /proj-00/ }));
+    press('KeyU');
+    expect(
+      screen.getByText('This repo is done. Next: proj-02 (1 kept) — Enter'),
+    ).toBeInTheDocument();
+    press('Enter');
+    expect(screen.getByRole('tab', { name: /Kept/ })).toHaveAttribute('aria-selected', 'true');
+    expect(shownIds()).toEqual([keptOld.id]);
+  });
+
+  it('shows a kept session’s conversation and keeps it across a rescan', async () => {
+    await openKept();
+    await advance(50);
+    expect(transcript()).toBe(`tail of ${keptNew.id}`);
+    const fetched = api.count('tails');
+    api.setList(withKept());
+    act(() => {
+      harness.registry.dispatch(inboxListContext, 'rescan');
+    });
+    await advance(50);
+    press('KeyJ');
+    press('KeyK');
+    await advance(50);
+    expect(transcript()).toBe(`tail of ${keptNew.id}`);
+    expect(api.count('tails')).toBe(fetched);
+  });
+
+  it('finds kept rows by search inside the Kept split', async () => {
+    await openKept();
+    press('Slash');
+    type(search(), 'long ago');
+    expect(shownIds()).toEqual([keptOld.id]);
   });
 });
 
@@ -1449,6 +1691,16 @@ describe('InboxView selection and bulk decisions', () => {
     expect(highlighted()).toEqual([]);
     click(row(login.id), { shiftKey: true });
     expect(highlighted()).toEqual([login.id]);
+  });
+
+  it('refuses a bulk archive of running rows without asking to confirm', async () => {
+    const busyA = makeRow({ id: 'claude-code:ba', label: 'busy a', running: true });
+    const busyB = makeRow({ id: 'claude-code:bb', label: 'busy b', running: true });
+    await renderInbox(makeList([busyA, busyB]));
+    press('Digit8', { shiftKey: true });
+    press('KeyE', { shiftKey: true });
+    expect(screen.getByText('Skipped 2 sessions')).toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 });
 

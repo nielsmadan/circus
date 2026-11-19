@@ -1,7 +1,8 @@
 export const TAIL_MAX_IDS = 16;
 export const TAIL_CHARS = 50_000;
 
-export type DecisionAction = 'harvest' | 'archive' | 'delete' | 'snooze' | 'keep' | 'keep_going';
+export type DecisionAction =
+  'harvest' | 'archive' | 'delete' | 'snooze' | 'keep' | 'keep_going' | 'unkeep';
 export type OutcomeStatus = 'ok' | 'refused' | 'empty' | 'failed';
 export type OutcomeCode =
   | 'changed'
@@ -127,6 +128,7 @@ export interface ListResponse {
   };
   scan?: ScanSummary | null;
   sessions: SessionRow[];
+  kept?: SessionRow[];
 }
 
 export interface ScanSummary {
@@ -207,6 +209,7 @@ export const LIST_RESPONSE_KEYS = [
   'agents',
   'generated_at',
   'home',
+  'kept',
   'kind',
   'presence',
   'recent_days',

@@ -1,5 +1,6 @@
 import type { Home, HomeProject, NextStep, SessionRow } from '../api/types';
 import { indexRows, parseMtime, projectCounts } from '../inbox/derive';
+import type { FakeWorld } from './synthetic';
 
 const IN_FLIGHT_LIMIT = 8;
 const LIVE_STATUSES: ReadonlySet<string> = new Set(['active', 'unfinished', 'blocked']);
@@ -35,7 +36,7 @@ function projectQueue(rows: readonly SessionRow[]): HomeProject[] {
 }
 
 export function fakeHome(
-  rows: readonly SessionRow[],
+  { sessions: rows, kept }: FakeWorld,
   pendingHarvests: number,
   roundupStale: boolean,
 ): Home {
@@ -92,7 +93,7 @@ export function fakeHome(
       unclassified: rows.filter((row) => row.status === 'unclassified').length,
       blocked: rows.filter((row) => row.status === 'blocked').length,
       stale: 0,
-      kept: 0,
+      kept: kept.length,
       projects: projects.length,
       spread_projects: 0,
     },

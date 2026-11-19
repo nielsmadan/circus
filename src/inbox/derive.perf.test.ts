@@ -31,7 +31,7 @@ describe('derive performance', () => {
     const index = indexRows(rows);
     const median = medianMs(() => {
       const visible = visibleSessions(rows, entries, applied);
-      const all = splitRows(visible, 'all', index);
+      const all = splitRows({ sessions: visible, kept: [] }, 'all', index);
       projectCounts(all, index);
       searchRows(all, 'proj login', index);
     });

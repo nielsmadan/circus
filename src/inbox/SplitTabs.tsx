@@ -1,22 +1,25 @@
 import { memo, type ReactElement } from 'react';
 import { inboxListContext } from '../shortcuts/contexts';
 import { useShortcuts } from '@shortcutkit/react';
-import { SPLITS, type Split } from './derive';
+import type { Split } from './derive';
 
 const SPLIT_LABELS: Readonly<Record<Split, string>> = {
   recent: 'Recent',
   woke: 'Woke',
   all: 'All',
+  kept: 'Kept',
 };
 
 export interface SplitTabsProps {
   readonly split: Split;
+  readonly splits: readonly Split[];
   readonly counts: Readonly<Record<Split, number>>;
   readonly onSplit: (split: Split) => void;
 }
 
 export const SplitTabs = memo(function SplitTabs({
   split,
+  splits,
   counts,
   onSplit,
 }: SplitTabsProps): ReactElement {
@@ -24,7 +27,7 @@ export const SplitTabs = memo(function SplitTabs({
   return (
     <div className="flex items-center gap-1">
       <div role="tablist" aria-label="Splits" className="flex gap-1">
-        {SPLITS.map((candidate) => (
+        {splits.map((candidate) => (
           <button
             key={candidate}
             type="button"

@@ -7,7 +7,7 @@ import type {
   TerminalLaunch,
 } from '../api/types';
 import { formatSnoozeTime } from '../snooze/parse';
-import type { Decision, Settled } from './outbox';
+import { isNoOpUnkeep, type Decision, type Settled } from './outbox';
 
 export type ToastTone = 'info' | 'warning' | 'error';
 
@@ -25,6 +25,7 @@ const VERBS: Readonly<Record<DecisionAction, string>> = Object.freeze({
   snooze: 'Snooze',
   keep: 'Keep',
   keep_going: 'Keep going',
+  unkeep: 'Return',
 });
 
 const PAST: Readonly<Record<DecisionAction, string>> = Object.freeze({
@@ -34,6 +35,11 @@ const PAST: Readonly<Record<DecisionAction, string>> = Object.freeze({
   snooze: 'Snoozed',
   keep: 'Kept',
   keep_going: 'Kept going',
+  unkeep: 'Returned',
+});
+
+const TAILS: Readonly<Partial<Record<DecisionAction, string>>> = Object.freeze({
+  unkeep: ' to the inbox',
 });
 
 export const unknownValue = (_value: never): null => null;
@@ -54,9 +60,18 @@ export function isChangedRefusal(outcome: DecideOutcome): boolean {
   );
 }
 
-export function verb(action: DecisionAction): string {
-  return VERBS[action];
+function phrase(word: string, action: DecisionAction, subject: string): string {
+  return `${word} ${subject}${TAILS[action] ?? ''}`;
 }
+
+const actText = (action: DecisionAction, subject: string): string =>
+  phrase(VERBS[action], action, subject);
+
+const lowerActText = (action: DecisionAction, subject: string): string =>
+  phrase(VERBS[action].toLowerCase(), action, subject);
+
+const doneText = (action: DecisionAction, subject: string): string =>
+  phrase(PAST[action], action, subject);
 
 export const errorDetail = (error: CircusError): string =>
   error.stderr_tail === null || error.stderr_tail === ''
@@ -87,7 +102,7 @@ function enqueuedText(
   if (action === 'snooze' && until !== null) {
     return `Snooze ${subject} until ${formatSnoozeTime(new Date(until), now)}`;
   }
-  return `${verb(action)} ${subject}`;
+  return actText(action, subject);
 }
 
 export function enqueuedToast(decision: Decision, now: Date = new Date()): ToastSpec {
@@ -110,7 +125,7 @@ export function batchEnqueuedToast(
 }
 
 export function batchSettledToast(action: DecisionAction, ok: number): ToastSpec {
-  return toast('info', `${PAST[action]} ${sessions(ok)}`);
+  return toast('info', doneText(action, sessions(ok)));
 }
 
 export interface BatchUndo {
@@ -120,7 +135,7 @@ export interface BatchUndo {
 
 export function batchUndoToast(action: DecisionAction, { undone, sent }: BatchUndo): ToastSpec {
   const tail = sent > 0 ? ` (${sent} already sent)` : '';
-  return toast('info', `Undid ${verb(action).toLowerCase()} of ${sessions(undone)}${tail}`);
+  return toast('info', `Undid ${lowerActText(action, `of ${sessions(undone)}`)}${tail}`);
 }
 
 export interface Skipped {
@@ -176,7 +191,7 @@ function joinDetail(parts: readonly (string | null)[]): string | null {
 
 export function refusalText(decision: Decision, outcome: DecideOutcome): string {
   const label = quoted(decision);
-  const failed = `Couldn’t ${verb(decision.action).toLowerCase()} ${label}`;
+  const failed = `Couldn’t ${lowerActText(decision.action, label)}`;
   switch (outcome.code) {
     case 'changed':
     case 'no_fingerprint':
@@ -216,10 +231,11 @@ function outcomeToast(decision: Decision, outcome: DecideOutcome): ToastSpec {
   const label = quoted(decision);
   switch (outcome.status) {
     case 'ok': {
+      if (isNoOpUnkeep(decision, outcome)) return toast('info', `${label} isn’t kept`);
       const path = decision.action === 'harvest' ? outcome.path : null;
       return toast(
         'info',
-        `${PAST[decision.action]} ${label}`,
+        doneText(decision.action, label),
         joinDetail([path, ...outcome.warnings]),
       );
     }
@@ -240,7 +256,7 @@ function outcomeToast(decision: Decision, outcome: DecideOutcome): ToastSpec {
 
 export function settledToast(settled: Settled): ToastSpec {
   const { decision } = settled;
-  const subject = `${verb(decision.action)} ${quoted(decision)}`;
+  const subject = actText(decision.action, quoted(decision));
   switch (settled.kind) {
     case 'outcome':
       return outcomeToast(decision, settled.outcome);
@@ -258,12 +274,12 @@ export function settledToast(settled: Settled): ToastSpec {
 
 export function undoToast(decision: Decision | null, lastSent: Decision | null = null): ToastSpec {
   if (decision !== null) {
-    return toast('info', `Undid ${verb(decision.action).toLowerCase()} ${quoted(decision)}`);
+    return toast('info', `Undid ${lowerActText(decision.action, quoted(decision))}`);
   }
   const text =
     lastSent === null
       ? 'Nothing to undo'
-      : `Nothing to undo — ${verb(lastSent.action).toLowerCase()} ${quoted(lastSent)} was already sent`;
+      : `Nothing to undo — ${lowerActText(lastSent.action, quoted(lastSent))} was already sent`;
   return toast('info', text);
 }
 

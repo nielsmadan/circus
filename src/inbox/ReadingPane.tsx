@@ -2,6 +2,7 @@ import { memo, type ReactElement, type ReactNode } from 'react';
 import type { SessionRow } from '../api/types';
 import { inboxListContext, type InboxListAction } from '../shortcuts/contexts';
 import { useShortcuts, useRegistry } from '@shortcutkit/react';
+import { isKept, isParking } from './derive';
 
 const DAY_FORMAT = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 const MOMENT_FORMAT = new Intl.DateTimeFormat(undefined, {
@@ -16,7 +17,7 @@ function formatted(format: Intl.DateTimeFormat, iso: string): string {
 
 function parked(row: SessionRow): string | null {
   if (row.kept_at !== null) return `kept since ${formatted(DAY_FORMAT, row.kept_at)}`;
-  if (row.snoozed_until !== null) {
+  if (row.snoozed_at !== null && row.snoozed_until !== null) {
     return `snoozed until ${formatted(MOMENT_FORMAT, row.snoozed_until)}`;
   }
   return null;
@@ -39,7 +40,9 @@ function fields(row: SessionRow): readonly (readonly [string, string | null])[] 
   ];
 }
 
-const ACTIONS: readonly (readonly [InboxListAction, string])[] = [
+type ActionList = readonly (readonly [InboxListAction, string])[];
+
+const INBOX_ACTIONS: ActionList = [
   ['harvestArchive', 'Harvest & archive'],
   ['archive', 'Archive'],
   ['delete', 'Delete'],
@@ -47,6 +50,11 @@ const ACTIONS: readonly (readonly [InboxListAction, string])[] = [
   ['keep', 'Keep'],
   ['keepGoing', 'Keep going'],
   ['resume', 'Resume'],
+];
+
+const KEPT_ACTIONS: ActionList = [
+  ['unkeep', 'Return to inbox'],
+  ...INBOX_ACTIONS.filter(([action]) => !isParking(action)),
 ];
 
 const ActionButton = memo(function ActionButton({
@@ -103,7 +111,7 @@ export const ReadingPane = memo(function ReadingPane({
         ))}
       </dl>
       <div className="flex flex-wrap gap-2">
-        {ACTIONS.map(([action, label]) => (
+        {(isKept(row) ? KEPT_ACTIONS : INBOX_ACTIONS).map(([action, label]) => (
           <ActionButton key={action} action={action} label={label} />
         ))}
       </div>

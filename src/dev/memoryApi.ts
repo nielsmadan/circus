@@ -18,8 +18,9 @@ import {
   type SessionRow,
   type TailItem,
 } from '../api/types';
-import { lifecycleText } from '../inbox/derive';
+import { isKept, lifecycleText, listedRows } from '../inbox/derive';
 import { fakeHome } from './fakeHome';
+import { keptRow, unkeptRow, type FakeWorld } from './synthetic';
 
 export interface MemoryApi extends CircusApi {
   requestClose(): void;
@@ -198,18 +199,30 @@ function okPath(request: DecideRequest, row: SessionRow): string | null {
   return null;
 }
 
+type World = FakeWorld;
+
+function settledWorld(world: World, row: SessionRow, action: DecisionAction, nowMs: number): World {
+  const sessions = world.sessions.filter((candidate) => candidate !== row);
+  const kept = world.kept.filter((candidate) => candidate !== row);
+  if (action === 'keep') {
+    return { sessions, kept: [...kept, keptRow(row, new Date(nowMs).toISOString())] };
+  }
+  if (action === 'unkeep') return { sessions: [...sessions, unkeptRow(row)], kept };
+  return { sessions, kept };
+}
+
 function decideInMemory(
-  rows: readonly SessionRow[],
+  world: World,
   request: DecideRequest,
   nowMs: number,
-): { readonly outcome: DecideOutcome; readonly rows: readonly SessionRow[] } {
-  const row = rows.find((candidate) => candidate.id === request.id);
+): { readonly outcome: DecideOutcome; readonly world: World } {
+  const row = listedRows(world).find((candidate) => candidate.id === request.id);
   const refused = DESTRUCTIVE.has(request.action)
     ? destructiveRefusal(request, row)
     : request.action === 'snooze'
       ? untilRefusal(request, nowMs)
       : null;
-  if (refused !== null) return { outcome: refused, rows };
+  if (refused !== null) return { outcome: refused, world };
   if (row === undefined) {
     return {
       outcome: outcome(request, {
@@ -217,13 +230,19 @@ function decideInMemory(
         code: 'gone',
         message: `${request.id}: ${GONE}`,
       }),
-      rows,
+      world,
     };
   }
   if (request.action === 'harvest' && row.project_short.endsWith('proj-00')) {
     return {
       outcome: outcome(request, { status: 'empty', message: 'nothing worth harvesting' }),
-      rows,
+      world,
+    };
+  }
+  if (request.action === 'unkeep' && !isKept(row)) {
+    return {
+      outcome: outcome(request, { status: 'ok', message: `${row.label} is not kept` }),
+      world,
     };
   }
   return {
@@ -233,7 +252,7 @@ function decideInMemory(
       wrote: true,
       path: okPath(request, row),
     }),
-    rows: rows.filter((candidate) => candidate !== row),
+    world: settledWorld(world, row, request.action, nowMs),
   };
 }
 
@@ -241,7 +260,8 @@ export function createMemoryApi(seed: ListResponse, options: MemoryApiOptions = 
   const latencyMs = options.latencyMs ?? 150;
   const harvestDelayMs = options.harvestDelayMs ?? 1_500;
   const cache = options.cache ?? true;
-  let current: readonly SessionRow[] = [...seed.sessions];
+  const seedWorld: World = { sessions: [...seed.sessions], kept: [...(seed.kept ?? [])] };
+  let current: World = seedWorld;
   let pendingHarvests = 0;
   const initialSetup = options.setup ?? 'current';
   const requirements = { minimum: '0.2.0', latest: '0.3.0', uv_available: true, can_install: true };
@@ -264,13 +284,14 @@ export function createMemoryApi(seed: ListResponse, options: MemoryApiOptions = 
       }, ms);
     });
 
-  const listOf = (generatedAt: string, sessions: readonly SessionRow[]): ListResponse => ({
+  const listOf = (generatedAt: string, world: World): ListResponse => ({
     ...seed,
     generated_at: generatedAt,
     registry: FAKE_REGISTRY,
     agents: [...FAKE_AGENTS],
-    home: fakeHome(sessions, pendingHarvests, seed.roundup.stale),
-    sessions: sessions as SessionRow[],
+    home: fakeHome(world, pendingHarvests, seed.roundup.stale),
+    sessions: [...world.sessions],
+    kept: [...world.kept],
   });
 
   const tailItem = (id: string, row: SessionRow | undefined): TailItem =>
@@ -309,20 +330,20 @@ export function createMemoryApi(seed: ListResponse, options: MemoryApiOptions = 
         return Promise.reject(invalid(`tails takes 1 to ${TAIL_MAX_IDS} ids`));
       }
       return after(latencyMs, () => {
-        const byId = new Map(current.map((row) => [row.id, row]));
+        const byId = new Map(listedRows(current).map((row) => [row.id, row]));
         return { version: 1, kind: 'tails', items: ids.map((id) => tailItem(id, byId.get(id))) };
       });
     },
     cachedList: () =>
       after(CACHE_DELAY_MS, () =>
-        cache ? listOf(new Date(Date.now() - HOUR_MS).toISOString(), [...seed.sessions]) : null,
+        cache ? listOf(new Date(Date.now() - HOUR_MS).toISOString(), seedWorld) : null,
       ),
     decide: (request) => {
       const rejected = rustRejection(request);
       if (rejected !== null) return Promise.reject(rejected);
       return after(request.action === 'harvest' ? harvestDelayMs : latencyMs, () => {
         const result = decideInMemory(current, request, Date.now());
-        current = result.rows;
+        current = result.world;
         if (request.action === 'harvest' && result.outcome.status === 'ok') pendingHarvests += 1;
         return result.outcome;
       });
@@ -331,7 +352,7 @@ export function createMemoryApi(seed: ListResponse, options: MemoryApiOptions = 
       after(latencyMs, () => ({ command: `rl resume ${id}`, launched: false, via: 'iterm2' })),
     previewHandoff: (request) =>
       after(latencyMs, (): HandoffResponse => {
-        const known = current.some((row) => row.project_key === request.project_key);
+        const known = current.sessions.some((row) => row.project_key === request.project_key);
         const agent = FAKE_AGENTS.find((entry) => entry.source === request.agent);
         const name = agent?.agent ?? request.agent;
         const document = {

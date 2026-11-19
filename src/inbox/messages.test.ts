@@ -25,7 +25,6 @@ import {
   settledToast,
   skippedToast,
   undoToast,
-  verb,
 } from './messages';
 import type { Decision } from './outbox';
 
@@ -57,19 +56,6 @@ function error(kind: CircusErrorKind, message: string): CircusError {
   return { kind, message, exit_code: null, stderr_tail: null };
 }
 
-describe('verb', () => {
-  it.each([
-    ['harvest', 'Harvest'],
-    ['archive', 'Archive'],
-    ['delete', 'Delete'],
-    ['snooze', 'Snooze'],
-    ['keep', 'Keep'],
-    ['keep_going', 'Keep going'],
-  ] as const)('%s → %s', (action, text) => {
-    expect(verb(action)).toBe(text);
-  });
-});
-
 describe('enqueuedToast', () => {
   it('names the decision with an undo', () => {
     expect(enqueuedToast(decision('archive'), NOW)).toEqual({
@@ -89,6 +75,13 @@ describe('enqueuedToast', () => {
     expect(enqueuedToast(decision('snooze', until), NOW).text).toBe(
       'Snooze “fix flaky login” until Tomorrow, 09:00',
     );
+  });
+
+  it('says an unkeep returns the session to the inbox', () => {
+    expect(enqueuedToast(decision('unkeep'), NOW).text).toBe(
+      'Return “fix flaky login” to the inbox',
+    );
+    expect(batchEnqueuedToast('unkeep', 3, null, NOW).text).toBe('Return 3 sessions to the inbox');
   });
 });
 
@@ -113,11 +106,48 @@ describe('settledToast', () => {
     ['snooze', 'Snoozed “fix flaky login”'],
     ['keep', 'Kept “fix flaky login”'],
     ['keep_going', 'Kept going “fix flaky login”'],
+    ['unkeep', 'Returned “fix flaky login” to the inbox'],
   ] as const)('reports an ok %s in the past tense', (action, text) => {
     expect(
       settledToast({ kind: 'outcome', decision: decision(action), outcome: outcome(action, {}) })
         .text,
     ).toBe(text);
+  });
+
+  it('says a session was not kept when an unkeep wrote nothing', () => {
+    const toast = settledToast({
+      kind: 'outcome',
+      decision: decision('unkeep'),
+      outcome: outcome('unkeep', { wrote: false }),
+    });
+    expect(toast).toEqual({
+      tone: 'info',
+      text: '“fix flaky login” isn’t kept',
+      undo: false,
+      detail: null,
+    });
+  });
+
+  it('words every unkeep toast as a return to the inbox', () => {
+    const failed = settledToast({
+      kind: 'outcome',
+      decision: decision('unkeep'),
+      outcome: outcome('unkeep', { status: 'failed', code: 'other', wrote: false }),
+    });
+    const unknown = settledToast({
+      kind: 'unknown',
+      decision: decision('unkeep'),
+      error: error('timeout', 'timed out'),
+    });
+    expect(failed.text).toBe('Couldn’t return “fix flaky login” to the inbox');
+    expect(unknown.text).toBe('Return “fix flaky login” to the inbox: result unknown — refreshing');
+    expect(undoToast(decision('unkeep')).text).toBe('Undid return “fix flaky login” to the inbox');
+    expect(undoToast(null, decision('unkeep')).text).toBe(
+      'Nothing to undo — return “fix flaky login” to the inbox was already sent',
+    );
+    expect(batchUndoToast('unkeep', { undone: 2, sent: 0 }).text).toBe(
+      'Undid return of 2 sessions to the inbox',
+    );
   });
 
   it('puts warnings in the detail', () => {
@@ -341,6 +371,7 @@ describe('batch toasts', () => {
 
   it('sums up a settled batch in the past tense', () => {
     expect(batchSettledToast('keep_going', 1).text).toBe('Kept going 1 session');
+    expect(batchSettledToast('unkeep', 2).text).toBe('Returned 2 sessions to the inbox');
   });
 
   it('says how many were undone and how many were already sent', () => {

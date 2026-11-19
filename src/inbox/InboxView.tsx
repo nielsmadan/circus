@@ -18,7 +18,11 @@ import { SnoozeDialog } from '../snooze/SnoozeDialog';
 import { Banners } from './Banners';
 import { Conversation } from './Conversation';
 import {
+  acceptsAny,
+  availableSplits,
+  DECISION_FOR,
   indexRows,
+  listedRows,
   narrowRows,
   nextSelection,
   parseMtime,
@@ -28,8 +32,9 @@ import {
   splitRows,
   filterByScope,
   mtimeOf,
-  SPLITS,
+  sourcesOf,
   type Split,
+  type SplitSources,
 } from './derive';
 import { WakingSoon } from './HomeLists';
 import {
@@ -100,15 +105,6 @@ const SIDEBAR_ACTION_VIEWS = {
 const INITIAL_VIEW: View = Object.freeze({ selectedId: null, scrollTop: 0, anchored: false });
 const currentTime = () => new Date();
 
-const DECISION_FOR: Readonly<Partial<Record<InboxListAction, DecisionAction>>> = {
-  harvestArchive: 'harvest',
-  archive: 'archive',
-  delete: 'delete',
-  snooze: 'snooze',
-  keep: 'keep',
-  keepGoing: 'keep_going',
-};
-
 function emptyText(
   split: Split,
   recentDays: number,
@@ -121,7 +117,8 @@ function emptyText(
   if (scope !== null) {
     const noun = scopeNoun(scope);
     if (following !== null) {
-      return `This ${noun} is done. Next: ${following.scope.label} (${following.count} waiting) — Enter`;
+      const waiting = split === 'kept' ? 'kept' : 'waiting';
+      return `This ${noun} is done. Next: ${following.scope.label} (${following.count} ${waiting}) — Enter`;
     }
     return remaining > 0
       ? `This ${noun} is done. Esc shows all ${noun}s`
@@ -134,6 +131,8 @@ function emptyText(
       return 'No snoozed sessions have woken up';
     case 'all':
       return 'Inbox zero';
+    case 'kept':
+      return 'No kept sessions';
   }
 }
 
@@ -154,13 +153,13 @@ function reconcileView(
   return { selectedId, scrollTop, anchored: view.anchored && selectedId === view.selectedId };
 }
 
-function nextSplit(split: Split, delta: number): Split {
-  const at = SPLITS.indexOf(split);
-  return SPLITS[(at + delta + SPLITS.length) % SPLITS.length] ?? split;
+function nextSplit(split: Split, delta: number, splits: readonly Split[]): Split {
+  const at = splits.indexOf(split);
+  return splits[(at + delta + splits.length) % splits.length] ?? split;
 }
 
 function rowsById(list: InboxController['list']): ReadonlyMap<string, SessionRow> {
-  const all = [...(list?.sessions ?? NO_ROWS), ...(list?.home?.rows ?? NO_ROWS)];
+  const all = [...listedRows(list), ...(list?.home?.rows ?? NO_ROWS)];
   return new Map(all.map((row) => [row.id, row]));
 }
 
@@ -177,7 +176,7 @@ export function InboxView({
   visible,
   onOpenHarvests,
 }: InboxViewProps): ReactElement {
-  const [split, setSplit] = useState<Split>('recent');
+  const [chosenSplit, setChosenSplit] = useState<Split>('recent');
   const sidebar = useSidebarScope();
   const [sidebarWidth, setSidebarWidth] = useSidebarWidth();
   const gridRef = useRef<HTMLDivElement | null>(null);
@@ -187,9 +186,16 @@ export function InboxView({
   const [snoozeTargets, setSnoozeTargets] = useState<readonly SessionRow[] | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
 
-  const { list, rows, notify, rescan } = controller;
-  const index = useMemo(() => indexRows(list?.sessions ?? NO_ROWS), [list]);
-  const inSplit = useMemo(() => splitRows(rows, split, index), [rows, split, index]);
+  const { list, rows, keptRows, notify, rescan } = controller;
+  const splits = availableSplits(list);
+  const split = splits.includes(chosenSplit) ? chosenSplit : 'recent';
+  const listed = useMemo(() => listedRows(list), [list]);
+  const index = useMemo(() => indexRows(listed), [listed]);
+  const sources = useMemo(
+    (): SplitSources => ({ sessions: rows, kept: keptRows }),
+    [rows, keptRows],
+  );
+  const inSplit = useMemo(() => splitRows(sources, split, index), [sources, split, index]);
   const homeDir = controller.info?.home_dir ?? null;
   const projects = useMemo(() => projectCounts(inSplit, index), [inSplit, index]);
   const generatedAt = list?.generated_at ?? null;
@@ -214,8 +220,12 @@ export function InboxView({
   const marks = useMarks(shownRows, `${split}|${scopeKey(scope)}`);
   const { markedRows } = marks;
   const counts = useMemo(
-    () => splitCounts(filterByScope(rows, scope, index)),
-    [rows, scope, index],
+    () =>
+      splitCounts({
+        sessions: filterByScope(rows, scope, index),
+        kept: filterByScope(keptRows, scope, index),
+      }),
+    [rows, keptRows, scope, index],
   );
   const following = useMemo(
     () =>
@@ -272,7 +282,7 @@ export function InboxView({
     [markedRows, marks.state, cursorId, anchored, selectedRow],
   );
   const chosenIds = useMemo(() => new Set(chosen.map((row) => row.id)), [chosen]);
-  const tail = useTails(api, shown, shownPositions, selectedRow, list?.sessions ?? null);
+  const tail = useTails(api, shown, shownPositions, selectedRow, list === null ? null : listed);
   const conversation = useMemo(
     () =>
       selectedRow === null ? null : (
@@ -319,9 +329,9 @@ export function InboxView({
   const changeSplit = useCallback(
     (next: Split) => {
       if (next === split) return;
-      setSplit(next);
+      setChosenSplit(next);
       setView(INITIAL_VIEW);
-      const nextRows = splitRows(rows, next, index);
+      const nextRows = splitRows(sources, next, index);
       updateScopes((current) => {
         const live = current === null ? null : resolvePeriod(current, nowMs);
         return live !== null && nextRows.some((row) => inScope(row, live, mtimeOf(row, index)))
@@ -329,10 +339,10 @@ export function InboxView({
           : null;
       });
     },
-    [split, rows, index, nowMs, updateScopes],
+    [split, sources, index, nowMs, updateScopes],
   );
   const inCurrentView = (row: SessionRow): boolean =>
-    narrowRows(splitRows([row], split, index), scope, query, index).length > 0;
+    narrowRows(splitRows(sourcesOf(row), split, index), scope, query, index).length > 0;
   const onPreviewWidth = useCallback((width: number) => {
     gridRef.current?.style.setProperty('grid-template-columns', sidebarColumns(width));
   }, []);
@@ -409,8 +419,8 @@ export function InboxView({
     placeCursor(id);
   });
 
-  const goTo = (target: Scope) => {
-    changeSplit('all');
+  const goTo = (target: Scope, within: Split) => {
+    changeSplit(within);
     sidebar.select(target);
     setView(INITIAL_VIEW);
   };
@@ -423,11 +433,14 @@ export function InboxView({
         changeSplit(step.kind);
         return;
       case 'project':
-        goTo({
-          kind: 'repo',
-          key: step.project_key,
-          label: allProjects.get(step.project_key)?.label ?? step.project_key,
-        });
+        goTo(
+          {
+            kind: 'repo',
+            key: step.project_key,
+            label: allProjects.get(step.project_key)?.label ?? step.project_key,
+          },
+          'all',
+        );
         return;
       case 'publish':
         onOpenHarvests();
@@ -462,6 +475,10 @@ export function InboxView({
   };
 
   const decideOn = (decision: DecisionAction, targets: readonly SessionRow[]) => {
+    if (!acceptsAny(decision, targets)) {
+      controller.decideMany(decision, targets);
+      return;
+    }
     if (decision === 'snooze') {
       unlessBlocked(() => setSnoozeTargets(targets));
       return;
@@ -478,7 +495,9 @@ export function InboxView({
   const resumeTargets = (targets: readonly SessionRow[]) => {
     const [only, ...others] = targets;
     if (only === undefined) {
-      if (following !== null && scope !== null) goTo(following.scope);
+      if (following !== null && scope !== null) {
+        goTo(following.scope, split === 'kept' ? 'kept' : 'all');
+      }
       return;
     }
     if (others.length > 0) notify(oneResumeToast());
@@ -535,10 +554,10 @@ export function InboxView({
         back();
         return;
       case 'nextSplit':
-        changeSplit(nextSplit(split, 1));
+        changeSplit(nextSplit(split, 1, splits));
         return;
       case 'previousSplit':
-        changeSplit(nextSplit(split, -1));
+        changeSplit(nextSplit(split, -1, splits));
         return;
       case 'rescan':
         controller.rescan();
@@ -582,7 +601,7 @@ export function InboxView({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-3 border-b border-neutral-200 px-3 py-2 dark:border-neutral-800">
-        <SplitTabs split={split} counts={counts} onSplit={changeSplit} />
+        <SplitTabs split={split} splits={splits} counts={counts} onSplit={changeSplit} />
         <SearchBox query={query} onQuery={setQuery} onDone={onSearchDone} inputRef={searchRef} />
         {markedRows.length > 0 && (
           <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-xs">

@@ -1,11 +1,38 @@
 import type { AppInfo, DecisionAction, ListResponse, SessionRow } from '../api/types';
+import type { InboxListAction } from '../shortcuts/contexts';
 import type { Applied } from './applied';
 import { presenceUnknownText, stillRunningText } from './messages';
 import type { OutboxEntry } from './outbox';
 import { inScope, type Scope } from './scope';
 
-export type Split = 'recent' | 'woke' | 'all';
-export const SPLITS: readonly Split[] = Object.freeze(['recent', 'woke', 'all']);
+export type Split = 'recent' | 'woke' | 'all' | 'kept';
+const INBOX_SPLITS: readonly Split[] = Object.freeze(['recent', 'woke', 'all']);
+const WITH_KEPT: readonly Split[] = Object.freeze([...INBOX_SPLITS, 'kept']);
+
+export function availableSplits(list: Pick<ListResponse, 'kept'> | null): readonly Split[] {
+  return list?.kept === undefined ? INBOX_SPLITS : WITH_KEPT;
+}
+
+export const isKept = (row: SessionRow): boolean => row.decision === 'keep';
+
+export interface SplitSources {
+  readonly sessions: readonly SessionRow[];
+  readonly kept: readonly SessionRow[];
+}
+
+const NO_ROWS: readonly SessionRow[] = Object.freeze([]);
+
+export function listedRows(
+  list: { readonly sessions: readonly SessionRow[]; readonly kept?: readonly SessionRow[] } | null,
+): readonly SessionRow[] {
+  const sessions = list?.sessions ?? NO_ROWS;
+  const kept = list?.kept ?? NO_ROWS;
+  return kept.length === 0 ? sessions : [...sessions, ...kept];
+}
+
+export function sourcesOf(row: SessionRow): SplitSources {
+  return isKept(row) ? { sessions: NO_ROWS, kept: [row] } : { sessions: [row], kept: NO_ROWS };
+}
 
 export interface ProjectCount {
   readonly key: string;
@@ -103,11 +130,11 @@ function sortByMtime(
     .map((keyed) => keyed.row);
 }
 
-export function splitRows(
-  rows: readonly SessionRow[],
-  split: Split,
-  index: RowIndex,
-): SessionRow[] {
+export function splitRows(sources: SplitSources, split: Split, index: RowIndex): SessionRow[] {
+  return sortSplit(split === 'kept' ? sources.kept : sources.sessions, split, index);
+}
+
+function sortSplit(rows: readonly SessionRow[], split: Split, index: RowIndex): SessionRow[] {
   switch (split) {
     case 'recent':
       return sortByMtime(
@@ -123,17 +150,29 @@ export function splitRows(
       );
     case 'all':
       return sortByMtime(rows, index, false);
+    case 'kept':
+      return newestKeptFirst(rows, index);
   }
 }
 
-export function splitCounts(rows: readonly SessionRow[]): Record<Split, number> {
+function newestKeptFirst(rows: readonly SessionRow[], index: RowIndex): SessionRow[] {
+  return rows
+    .map((row) => ({
+      row,
+      ms: row.kept_at === null ? mtimeOf(row, index) : parseMtime(row.kept_at),
+    }))
+    .sort((a, b) => b.ms - a.ms || compareStrings(a.row.id, b.row.id))
+    .map((keyed) => keyed.row);
+}
+
+export function splitCounts({ sessions, kept }: SplitSources): Record<Split, number> {
   let recent = 0;
   let woke = 0;
-  for (const row of rows) {
+  for (const row of sessions) {
     if (row.in_recent) recent += 1;
     if (row.woke) woke += 1;
   }
-  return { recent, woke, all: rows.length };
+  return { recent, woke, all: sessions.length, kept: kept.length };
 }
 
 export function filterByScope(
@@ -235,6 +274,22 @@ export function nextSelection(
 }
 
 const GUARDED_ACTIONS: ReadonlySet<DecisionAction> = new Set(['archive', 'delete', 'harvest']);
+const PARKING_ACTIONS: ReadonlySet<DecisionAction> = new Set(['snooze', 'keep', 'keep_going']);
+
+export const DECISION_FOR: Readonly<Partial<Record<InboxListAction, DecisionAction>>> = {
+  harvestArchive: 'harvest',
+  archive: 'archive',
+  delete: 'delete',
+  snooze: 'snooze',
+  keep: 'keep',
+  keepGoing: 'keep_going',
+  unkeep: 'unkeep',
+};
+
+export function isParking(action: InboxListAction): boolean {
+  const decision = DECISION_FOR[action];
+  return decision !== undefined && PARKING_ACTIONS.has(decision);
+}
 
 const ARCHIVE_BLOCK = 'cannot archive ';
 
@@ -245,7 +300,13 @@ export function lifecycleText(block: string, action: DecisionAction): string {
     : block;
 }
 
+export function acceptsAny(action: DecisionAction, rows: readonly SessionRow[]): boolean {
+  return rows.some((row) => clientRefusal(action, row) === null);
+}
+
 export function clientRefusal(action: DecisionAction, row: SessionRow): string | null {
+  if (action === 'unkeep') return isKept(row) ? null : `${row.label} isn’t kept`;
+  if (PARKING_ACTIONS.has(action)) return isKept(row) ? `${row.label} is already kept` : null;
   if (!GUARDED_ACTIONS.has(action)) return null;
   if (row.running === true) return stillRunningText(row.label);
   if (row.running === null) return presenceUnknownText(row.label);

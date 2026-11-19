@@ -2,7 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CircusError, DecideOutcome, DecideRequest, SessionRow } from '../api/types';
 import { createFakeApi, NATIVE_INFO, okOutcome, type FakeApi } from '../test/fakeApi';
-import { makeList, makeRow, makeScanSummary } from '../test/fixtures';
+import { makeKeptRow, makeList, makeRow, makeScanSummary } from '../test/fixtures';
 import type { Settled } from './outbox';
 import { landList, settleEffects, useInbox, type LandedList } from './useInbox';
 
@@ -387,6 +387,41 @@ describe('useInbox scan flights', () => {
 });
 
 describe('useInbox decisions', () => {
+  const kept = makeKeptRow({ id: 'claude-code:k', label: 'kept one' });
+
+  it('lists kept rows apart, hides one while its unkeep is pending and lists it in the inbox after a later list', async () => {
+    const api = createFakeApi(makeList([rowA], { kept: [kept] }));
+    const { result } = await mountInbox(api);
+    expect(ids(result.current.rows)).toEqual([rowA.id]);
+    expect(ids(result.current.keptRows)).toEqual([kept.id]);
+    act(() => {
+      expect(result.current.decide('unkeep', kept)).toBe(true);
+    });
+    expect(result.current.keptRows).toEqual([]);
+    expect(ids(result.current.rows)).toEqual([rowA.id]);
+    await advance(4_000);
+    await flush();
+    expect(texts(result)).toContain('Returned “kept one” to the inbox');
+    const unkept = { ...kept, decision: null, kept_at: null, badges: [] };
+    act(() => api.setList(makeList([rowA, unkept], { kept: [] })));
+    act(() => result.current.refresh());
+    await flush();
+    expect(ids(result.current.rows)).toEqual([rowA.id, kept.id]);
+    expect(result.current.keptRows).toEqual([]);
+  });
+
+  it('shows the not-kept toast when an unkeep wrote nothing', async () => {
+    const api = createFakeApi(makeList([rowA], { kept: [kept] }));
+    api.setDefault('decide', (request) => Promise.resolve(okOutcome(request, { wrote: false })));
+    const { result } = await mountInbox(api);
+    act(() => {
+      result.current.decide('unkeep', kept);
+    });
+    await advance(4_000);
+    await flush();
+    expect(texts(result)).toContain('“kept one” isn’t kept');
+  });
+
   it('hides the row, sends after the undo window and keeps it hidden until a later list', async () => {
     const api = createFakeApi(makeList([rowA, rowB]));
     const { result } = await mountInbox(api);

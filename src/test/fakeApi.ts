@@ -9,6 +9,7 @@ import type {
   SetupStatus,
   TailsResponse,
 } from '../api/types';
+import { listedRows } from '../inbox/derive';
 import { makeList, makeScanSummary } from './fixtures';
 
 type Method = Exclude<keyof CircusApi, 'onCloseRequested'>;
@@ -115,7 +116,7 @@ export function createFakeApi(initial: ListResponse = makeList([])): FakeApi {
   const queues = new Map<Method, (() => Promise<unknown>)[]>();
 
   const tails = (ids: readonly string[]): TailsResponse => {
-    const byId = new Map(list.sessions.map((row) => [row.id, row]));
+    const byId = new Map(listedRows(list).map((row) => [row.id, row]));
     return {
       version: 1,
       kind: 'tails',

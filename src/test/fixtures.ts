@@ -41,6 +41,16 @@ export function makeRow(overrides: Partial<SessionRow> = {}): SessionRow {
   return { ...BASE_ROW, badges: [], ...overrides };
 }
 
+export function makeKeptRow(overrides: Partial<SessionRow> = {}): SessionRow {
+  return makeRow({
+    decision: 'keep',
+    kept_at: '2026-10-01T09:00:00+00:00',
+    in_recent: false,
+    badges: ['kept'],
+    ...overrides,
+  });
+}
+
 export function makeList(
   rows: readonly SessionRow[],
   overrides: Partial<ListResponse> = {},

@@ -82,4 +82,25 @@ describe('memberEnd', () => {
       }),
     ).toBe('not_ok');
   });
+
+  it('counts an unkeep of a row that was not kept as not ok', () => {
+    const unkeep: Decision = { ...decision, action: 'unkeep' };
+    const outcome: DecideOutcome = {
+      version: 1,
+      status: 'ok',
+      kind: 'outcome',
+      action: 'unkeep',
+      id: decision.row.id,
+      code: null,
+      reason: null,
+      message: 'not kept',
+      wrote: false,
+      path: null,
+      warnings: [],
+    };
+    expect(memberEnd({ kind: 'outcome', decision: unkeep, outcome })).toBe('not_ok');
+    expect(
+      memberEnd({ kind: 'outcome', decision: unkeep, outcome: { ...outcome, wrote: true } }),
+    ).toBe('ok');
+  });
 });
