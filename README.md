@@ -8,7 +8,7 @@ Tauri 2, React 19, TypeScript, Rust. Unsigned, no updater; macOS only.
 
 - macOS 12 or later
 - Node 24 and pnpm 12.9.0 (`packageManager` in `package.json`)
-- Rust stable with `clippy` and `rustfmt`, `just`, `lefthook`
+- rustup (it installs the Rust pinned in `rust-toolchain.toml`), `just`, `lefthook`
 - `uv`, `jq` and `gh` (the dev recipes fetch the ringleader release pinned in `ringleader.json`)
 - for real use: nothing else; on first launch Circus offers to install or update ringleader with `uv tool install`
 

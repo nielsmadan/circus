@@ -21,7 +21,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: circus/pnpm-lock.yaml
       - uses: extractions/setup-just@v4.0.0
-      - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+      - run: rustup toolchain install
+        working-directory: circus
       - run: pnpm install --frozen-lockfile
         working-directory: circus
       - run: just check
