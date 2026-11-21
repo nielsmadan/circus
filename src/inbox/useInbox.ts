@@ -83,6 +83,7 @@ export interface InboxController {
   readonly scanning: boolean;
   readonly rows: readonly SessionRow[];
   readonly keptRows: readonly SessionRow[];
+  readonly snoozedRows: readonly SessionRow[];
   readonly entries: readonly OutboxEntry[];
   readonly closing: boolean;
   readonly finishBy: number | null;
@@ -513,6 +514,10 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
     () => visibleSessions(list?.kept ?? NO_ROWS, entries, applied),
     [list, entries, applied],
   );
+  const snoozedRows = useMemo(
+    () => visibleSessions(list?.snoozed ?? NO_ROWS, entries, applied),
+    [list, entries, applied],
+  );
 
   const decide = useCallback(
     (action: DecisionAction, row: SessionRow, until: string | null = null): boolean => {
@@ -626,6 +631,7 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
       scanning,
       rows,
       keptRows,
+      snoozedRows,
       entries,
       closing,
       finishBy,
@@ -648,6 +654,7 @@ export function useInbox(api: CircusApi, clock: Clock = DEFAULT_CLOCK): InboxCon
       scanning,
       rows,
       keptRows,
+      snoozedRows,
       entries,
       closing,
       finishBy,

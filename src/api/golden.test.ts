@@ -34,7 +34,7 @@ function keysOf(value: object): string[] {
 }
 
 // remove each key once the pinned release's goldens carry it
-const UNRELEASED_LIST_KEYS: ReadonlySet<string> = new Set(['kept']);
+const UNRELEASED_LIST_KEYS: ReadonlySet<string> = new Set(['kept', 'snoozed']);
 
 describe('golden documents', () => {
   it('pins the list document and every session row', () => {

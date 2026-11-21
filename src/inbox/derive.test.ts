@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AppInfo, SessionRow } from '../api/types';
-import { makeKeptRow, makeList, makeRow } from '../test/fixtures';
+import { localDayBounds } from '../localDay';
+import { makeKeptRow, makeList, makeRow, makeSnoozedRow } from '../test/fixtures';
 import type { OutboxEntry } from './outbox';
 import {
   acceptsAny,
@@ -10,6 +11,8 @@ import {
   filterByScope,
   hiddenIds,
   indexRows,
+  isSnoozed,
+  offers,
   listedRows,
   narrowRows,
   nextSelection,
@@ -37,7 +40,7 @@ function ids(rows: readonly SessionRow[]): string[] {
 }
 
 function inbox(sessions: readonly SessionRow[]) {
-  return { sessions, kept: [] };
+  return { sessions, kept: [], snoozed: [] };
 }
 
 const appInfo: AppInfo = {
@@ -121,40 +124,88 @@ describe('splitRows and splitCounts', () => {
   const index = indexRows(rows);
 
   it('orders recent newest first and keeps only recent rows', () => {
-    expect(ids(splitRows(inbox(rows), 'recent', index))).toEqual([c.id, d.id, b.id]);
+    expect(ids(splitRows(inbox(rows), 'recent', index, null))).toEqual([c.id, d.id, b.id]);
   });
 
   it('orders woke and all oldest first with ties by id', () => {
-    expect(ids(splitRows(inbox(rows), 'woke', index))).toEqual([a.id, c.id]);
-    expect(ids(splitRows(inbox(rows), 'all', index))).toEqual([a.id, b.id, c.id, d.id]);
+    expect(ids(splitRows(inbox(rows), 'woke', index, null))).toEqual([a.id, c.id]);
+    expect(ids(splitRows(inbox(rows), 'all', index, null))).toEqual([a.id, b.id, c.id, d.id]);
   });
 
   it('falls back to parsing a row missing from the index', () => {
-    expect(ids(splitRows(inbox(rows), 'all', indexRows([])))).toEqual([a.id, b.id, c.id, d.id]);
+    expect(ids(splitRows(inbox(rows), 'all', indexRows([]), null))).toEqual([
+      a.id,
+      b.id,
+      c.id,
+      d.id,
+    ]);
   });
 
   it('orders a visible subset using its current row objects', () => {
     const updated = { ...c, label: 'Updated label' };
-    const sorted = splitRows(inbox([updated, a]), 'all', index);
+    const sorted = splitRows(inbox([updated, a]), 'all', index, null);
     expect(sorted).toEqual([a, updated]);
     expect(sorted[1]).toBe(updated);
   });
 
   it('preserves duplicate rows when sorting', () => {
-    expect(splitRows(inbox([c, a, c]), 'all', index)).toEqual([a, c, c]);
+    expect(splitRows(inbox([c, a, c]), 'all', index, null)).toEqual([a, c, c]);
   });
 
   it('returns each visible row once when the index source repeats an id', () => {
-    expect(splitRows(inbox([c, a]), 'all', indexRows([a, c, a]))).toEqual([a, c]);
+    expect(splitRows(inbox([c, a]), 'all', indexRows([a, c, a]), null)).toEqual([a, c]);
   });
 
   it('counts the inbox splits and the kept rows', () => {
-    expect(splitCounts({ sessions: rows, kept: [a] })).toEqual({
+    const snoozed = [makeSnoozedRow({ id: 's:1' }), makeSnoozedRow({ id: 's:2' })];
+    const today = localDayBounds(parseMtime(c.mtime));
+    expect(splitCounts({ sessions: rows, kept: [a], snoozed }, index, today)).toEqual({
+      today: 2,
       recent: 3,
       woke: 2,
       all: 4,
+      snoozed: 2,
       kept: 1,
     });
+  });
+
+  it('lists today’s inbox rows newest first, bounded by local midnight', () => {
+    const at = (hour: number, minute = 0) => new Date(2026, 9, 14, hour, minute).toISOString();
+    const midnight = makeRow({ id: 't:midnight', mtime: at(0) });
+    const early = makeRow({ id: 't:early', mtime: at(0, 5) });
+    const late = makeRow({ id: 't:late', mtime: at(23, 55) });
+    const yesterday = makeRow({
+      id: 't:yesterday',
+      mtime: new Date(2026, 9, 13, 23, 59).toISOString(),
+    });
+    const tomorrow = makeRow({
+      id: 't:tomorrow',
+      mtime: new Date(2026, 9, 15, 0, 0).toISOString(),
+    });
+    const day = [midnight, early, late, yesterday, tomorrow];
+    const today = localDayBounds(new Date(2026, 9, 14, 12).getTime());
+    expect(ids(splitRows(inbox(day), 'today', indexRows(day), today))).toEqual([
+      't:late',
+      't:early',
+      't:midnight',
+    ]);
+    expect(splitRows(inbox(day), 'today', indexRows(day), null)).toEqual([]);
+  });
+
+  it('orders snoozed rows by when they wake, open-ended last, ties by id', () => {
+    const soonB = makeSnoozedRow({ id: 's:soon-b', snoozed_until: '2026-10-18T09:00:00+00:00' });
+    const soonA = makeSnoozedRow({ id: 's:soon-a', snoozed_until: '2026-10-18T09:00:00+00:00' });
+    const later = makeSnoozedRow({ id: 's:later', snoozed_until: '2026-11-01T09:00:00+00:00' });
+    const open = makeSnoozedRow({ id: 's:open', snoozed_until: null });
+    const garbled = makeSnoozedRow({ id: 's:garbled', snoozed_until: 'next tuesday' });
+    const snoozed = [garbled, open, later, soonB, soonA];
+    expect(ids(splitRows({ sessions: rows, kept: [], snoozed }, 'snoozed', index, null))).toEqual([
+      's:soon-a',
+      's:soon-b',
+      's:later',
+      's:garbled',
+      's:open',
+    ]);
   });
 
   it('orders kept rows by when they were kept, newest first with ties by id', () => {
@@ -162,11 +213,9 @@ describe('splitRows and splitCounts', () => {
     const lateB = makeKeptRow({ id: 'k:late-b', kept_at: '2026-10-05T09:00:00+00:00' });
     const lateA = makeKeptRow({ id: 'k:late-a', kept_at: '2026-10-05T09:00:00+00:00' });
     const kept = [early, lateB, lateA];
-    expect(ids(splitRows({ sessions: rows, kept }, 'kept', indexRows(kept)))).toEqual([
-      'k:late-a',
-      'k:late-b',
-      'k:early',
-    ]);
+    expect(
+      ids(splitRows({ sessions: rows, kept, snoozed: [] }, 'kept', indexRows(kept), null)),
+    ).toEqual(['k:late-a', 'k:late-b', 'k:early']);
   });
 
   it('orders a kept row without a keep time by its last activity', () => {
@@ -178,23 +227,33 @@ describe('splitRows and splitCounts', () => {
       mtime: '2026-10-03T09:00:00+00:00',
     });
     const kept = [early, between, late];
-    expect(ids(splitRows({ sessions: [], kept }, 'kept', indexRows(kept)))).toEqual([
-      'k:late',
-      'k:between',
-      'k:early',
-    ]);
+    expect(
+      ids(splitRows({ sessions: [], kept, snoozed: [] }, 'kept', indexRows(kept), null)),
+    ).toEqual(['k:late', 'k:between', 'k:early']);
   });
 
   it('places a single row in the split its own state belongs to', () => {
     const kept = makeKeptRow({ id: 'k:one' });
-    expect(ids(splitRows(sourcesOf(kept), 'kept', index))).toEqual(['k:one']);
-    expect(ids(splitRows(sourcesOf(kept), 'all', index))).toEqual([]);
-    expect(ids(splitRows(sourcesOf(a), 'all', index))).toEqual([a.id]);
+    const snoozed = makeSnoozedRow({ id: 's:one' });
+    expect(ids(splitRows(sourcesOf(snoozed), 'snoozed', index, null))).toEqual(['s:one']);
+    expect(
+      ids(
+        splitRows(
+          sourcesOf(makeKeptRow({ id: 'k:sn', snoozed_at: snoozed.snoozed_at })),
+          'kept',
+          index,
+          null,
+        ),
+      ),
+    ).toEqual(['k:sn']);
+    expect(ids(splitRows(sourcesOf(kept), 'kept', index, null))).toEqual(['k:one']);
+    expect(ids(splitRows(sourcesOf(kept), 'all', index, null))).toEqual([]);
+    expect(ids(splitRows(sourcesOf(a), 'all', index, null))).toEqual([a.id]);
   });
 
   it('leaves its input in place', () => {
     const before = [...rows];
-    splitRows(inbox(rows), 'all', index);
+    splitRows(inbox(rows), 'all', index, null);
     expect(rows).toEqual(before);
   });
 });
@@ -321,16 +380,51 @@ describe('listedRows', () => {
   it('lists the inbox rows, then the kept ones', () => {
     const kept = makeKeptRow({ id: 'k:one' });
     expect(ids(listedRows(makeList([a, b], { kept: [kept] })))).toEqual([a.id, b.id, kept.id]);
+    const snoozed = makeSnoozedRow({ id: 's:one' });
+    expect(ids(listedRows(makeList([a], { kept: [kept], snoozed: [snoozed] })))).toEqual([
+      a.id,
+      kept.id,
+      snoozed.id,
+    ]);
     expect(listedRows(makeList([a]))).toEqual([a]);
     expect(listedRows(null)).toEqual([]);
   });
 });
 
 describe('availableSplits', () => {
-  it('adds the Kept split only when the list carries kept rows', () => {
-    expect(availableSplits(makeList([]))).toEqual(['recent', 'woke', 'all']);
-    expect(availableSplits({ kept: [] })).toEqual(['recent', 'woke', 'all', 'kept']);
-    expect(availableSplits(null)).toEqual(['recent', 'woke', 'all']);
+  it('adds Snoozed and Kept only when the list carries their rows', () => {
+    expect(availableSplits(makeList([]))).toEqual(['today', 'recent', 'woke', 'all']);
+    expect(availableSplits({ kept: [] })).toEqual(['today', 'recent', 'woke', 'all', 'kept']);
+    expect(availableSplits({ snoozed: [] })).toEqual(['today', 'recent', 'woke', 'all', 'snoozed']);
+    expect(availableSplits({ kept: [], snoozed: [] })).toEqual([
+      'today',
+      'recent',
+      'woke',
+      'all',
+      'snoozed',
+      'kept',
+    ]);
+    expect(availableSplits(null)).toEqual(['today', 'recent', 'woke', 'all']);
+  });
+});
+
+describe('isSnoozed and offers', () => {
+  const snoozed = makeSnoozedRow({ label: 'S' });
+  const woke = makeRow({ label: 'W', woke: true, snoozed_at: '2026-10-01T09:00:00+00:00' });
+
+  it('counts a snooze as active until it has woken, and never on a kept row', () => {
+    expect(isSnoozed(snoozed)).toBe(true);
+    expect(isSnoozed(woke)).toBe(false);
+    expect(isSnoozed(makeKeptRow({ snoozed_at: '2026-10-01T09:00:00+00:00' }))).toBe(false);
+  });
+
+  it('offers wake and re-snooze on a snoozed row, but not keep', () => {
+    expect(offers('wake', snoozed)).toBe(true);
+    expect(offers('snooze', snoozed)).toBe(true);
+    expect(offers('keep', snoozed)).toBe(false);
+    expect(offers('keepGoing', snoozed)).toBe(false);
+    expect(offers('resume', snoozed)).toBe(true);
+    expect(offers('wake', woke)).toBe(false);
   });
 });
 
@@ -340,6 +434,18 @@ describe('clientRefusal', () => {
   it('accepts a decision when any row passes the refusals', () => {
     expect(acceptsAny('snooze', [kept, makeRow()])).toBe(true);
     expect(acceptsAny('snooze', [kept])).toBe(false);
+  });
+
+  it('wakes only snoozed rows and keeps none of them', () => {
+    const snoozed = makeSnoozedRow({ label: 'S' });
+    expect(clientRefusal('wake', snoozed)).toBeNull();
+    expect(clientRefusal('wake', makeRow({ label: 'L' }))).toBe('L isn’t snoozed');
+    expect(
+      clientRefusal('wake', makeKeptRow({ label: 'K', snoozed_at: '2026-10-01T09:00:00+00:00' })),
+    ).toBe('K is kept');
+    expect(clientRefusal('keep', snoozed)).toBe('S is snoozed');
+    expect(clientRefusal('keep_going', snoozed)).toBe('S is snoozed');
+    expect(clientRefusal('snooze', snoozed)).toBeNull();
   });
 
   it('returns only kept rows to the inbox', () => {

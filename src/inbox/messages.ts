@@ -7,7 +7,7 @@ import type {
   TerminalLaunch,
 } from '../api/types';
 import { formatSnoozeTime } from '../snooze/parse';
-import { isNoOpUnkeep, type Decision, type Settled } from './outbox';
+import { unchangedState, type Decision, type Settled } from './outbox';
 
 export type ToastTone = 'info' | 'warning' | 'error';
 
@@ -26,9 +26,10 @@ const VERBS: Readonly<Record<DecisionAction, string>> = Object.freeze({
   keep: 'Keep',
   keep_going: 'Keep going',
   unkeep: 'Return',
+  wake: 'Wake',
 });
 
-const PAST: Readonly<Record<DecisionAction, string>> = Object.freeze({
+const DONE: Readonly<Record<DecisionAction, string>> = Object.freeze({
   harvest: 'Harvested',
   archive: 'Archived',
   delete: 'Deleted',
@@ -36,6 +37,7 @@ const PAST: Readonly<Record<DecisionAction, string>> = Object.freeze({
   keep: 'Kept',
   keep_going: 'Kept going',
   unkeep: 'Returned',
+  wake: 'Back in the inbox:',
 });
 
 const TAILS: Readonly<Partial<Record<DecisionAction, string>>> = Object.freeze({
@@ -71,7 +73,7 @@ const lowerActText = (action: DecisionAction, subject: string): string =>
   phrase(VERBS[action].toLowerCase(), action, subject);
 
 const doneText = (action: DecisionAction, subject: string): string =>
-  phrase(PAST[action], action, subject);
+  phrase(DONE[action], action, subject);
 
 export const errorDetail = (error: CircusError): string =>
   error.stderr_tail === null || error.stderr_tail === ''
@@ -231,7 +233,8 @@ function outcomeToast(decision: Decision, outcome: DecideOutcome): ToastSpec {
   const label = quoted(decision);
   switch (outcome.status) {
     case 'ok': {
-      if (isNoOpUnkeep(decision, outcome)) return toast('info', `${label} isn’t kept`);
+      const unchanged = unchangedState(decision, outcome);
+      if (unchanged !== null) return toast('info', `${label} isn’t ${unchanged}`);
       const path = decision.action === 'harvest' ? outcome.path : null;
       return toast(
         'info',

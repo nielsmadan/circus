@@ -17,6 +17,7 @@ export const UNDO_WINDOW_MS: Readonly<Record<DecisionAction, number>> = Object.f
   keep: 4_000,
   keep_going: 4_000,
   unkeep: 4_000,
+  wake: 4_000,
 });
 
 export const HARVEST_CONCURRENCY = 2;
@@ -320,8 +321,17 @@ export class Outbox {
   }
 }
 
-export function isNoOpUnkeep(decision: Decision, outcome: DecideOutcome): boolean {
-  return decision.action === 'unkeep' && outcome.status === 'ok' && !outcome.wrote;
+const RESTORED_FROM: Readonly<Partial<Record<DecisionAction, 'kept' | 'snoozed'>>> = Object.freeze({
+  unkeep: 'kept',
+  wake: 'snoozed',
+});
+
+export function unchangedState(
+  decision: Decision,
+  outcome: DecideOutcome,
+): 'kept' | 'snoozed' | null {
+  const from = RESTORED_FROM[decision.action];
+  return from !== undefined && outcome.status === 'ok' && !outcome.wrote ? from : null;
 }
 
 export function toRequest(decision: Decision): DecideRequest {

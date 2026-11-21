@@ -18,9 +18,9 @@ import {
   type SessionRow,
   type TailItem,
 } from '../api/types';
-import { isKept, lifecycleText, listedRows } from '../inbox/derive';
+import { isKept, lifecycleText, listedRows, parseMtime } from '../inbox/derive';
 import { fakeHome } from './fakeHome';
-import { keptRow, unkeptRow, type FakeWorld } from './synthetic';
+import { keptRow, snoozedRow, unkeptRow, unsnoozedRow, type FakeWorld } from './synthetic';
 
 export interface MemoryApi extends CircusApi {
   requestClose(): void;
@@ -201,14 +201,54 @@ function okPath(request: DecideRequest, row: SessionRow): string | null {
 
 type World = FakeWorld;
 
-function settledWorld(world: World, row: SessionRow, action: DecisionAction, nowMs: number): World {
-  const sessions = world.sessions.filter((candidate) => candidate !== row);
-  const kept = world.kept.filter((candidate) => candidate !== row);
-  if (action === 'keep') {
-    return { sessions, kept: [...kept, keptRow(row, new Date(nowMs).toISOString())] };
+function activeSnooze(row: SessionRow, nowMs: number): boolean {
+  return (
+    row.snoozed_at !== null && (row.snoozed_until === null || parseMtime(row.snoozed_until) > nowMs)
+  );
+}
+
+function settledWorld(world: World, row: SessionRow, request: DecideRequest, nowMs: number): World {
+  const others = (rows: readonly SessionRow[]) => rows.filter((candidate) => candidate !== row);
+  const rest = {
+    sessions: others(world.sessions),
+    kept: others(world.kept),
+    snoozed: others(world.snoozed),
+  };
+  const now = new Date(nowMs).toISOString();
+  switch (request.action) {
+    case 'keep':
+      return { ...rest, kept: [...rest.kept, keptRow(row, now)] };
+    case 'unkeep':
+      return { ...rest, sessions: [...rest.sessions, unkeptRow(row)] };
+    case 'snooze': {
+      const snoozed = snoozedRow(row, now, request.until);
+      return isKept(row)
+        ? { ...rest, kept: [...rest.kept, snoozed] }
+        : { ...rest, snoozed: [...rest.snoozed, snoozed] };
+    }
+    case 'wake': {
+      const woken = unsnoozedRow(row);
+      return isKept(row)
+        ? { ...rest, kept: [...rest.kept, woken] }
+        : { ...rest, sessions: [...rest.sessions, woken] };
+    }
+    case 'archive':
+    case 'delete':
+    case 'harvest':
+    case 'keep_going':
+      return rest;
   }
-  if (action === 'unkeep') return { sessions: [...sessions, unkeptRow(row)], kept };
-  return { sessions, kept };
+}
+
+function listedWorld(world: World, nowMs: number): World {
+  const expired = world.snoozed.filter((row) => !activeSnooze(row, nowMs));
+  if (expired.length === 0) return world;
+  const active = world.snoozed.filter((row) => activeSnooze(row, nowMs));
+  return {
+    ...world,
+    sessions: [...world.sessions, ...expired.map((row) => ({ ...row, woke: true }))],
+    snoozed: active,
+  };
 }
 
 function decideInMemory(
@@ -245,6 +285,12 @@ function decideInMemory(
       world,
     };
   }
+  if (request.action === 'wake' && !activeSnooze(row, nowMs)) {
+    return {
+      outcome: outcome(request, { status: 'ok', message: `${row.label} is not snoozed` }),
+      world,
+    };
+  }
   return {
     outcome: outcome(request, {
       status: 'ok',
@@ -252,7 +298,7 @@ function decideInMemory(
       wrote: true,
       path: okPath(request, row),
     }),
-    world: settledWorld(world, row, request.action, nowMs),
+    world: settledWorld(world, row, request, nowMs),
   };
 }
 
@@ -260,7 +306,11 @@ export function createMemoryApi(seed: ListResponse, options: MemoryApiOptions = 
   const latencyMs = options.latencyMs ?? 150;
   const harvestDelayMs = options.harvestDelayMs ?? 1_500;
   const cache = options.cache ?? true;
-  const seedWorld: World = { sessions: [...seed.sessions], kept: [...(seed.kept ?? [])] };
+  const seedWorld: World = {
+    sessions: [...seed.sessions],
+    kept: [...(seed.kept ?? [])],
+    snoozed: [...(seed.snoozed ?? [])],
+  };
   let current: World = seedWorld;
   let pendingHarvests = 0;
   const initialSetup = options.setup ?? 'current';
@@ -284,15 +334,19 @@ export function createMemoryApi(seed: ListResponse, options: MemoryApiOptions = 
       }, ms);
     });
 
-  const listOf = (generatedAt: string, world: World): ListResponse => ({
-    ...seed,
-    generated_at: generatedAt,
-    registry: FAKE_REGISTRY,
-    agents: [...FAKE_AGENTS],
-    home: fakeHome(world, pendingHarvests, seed.roundup.stale),
-    sessions: [...world.sessions],
-    kept: [...world.kept],
-  });
+  const listOf = (generatedAt: string, stored: World): ListResponse => {
+    const world = listedWorld(stored, Date.parse(generatedAt));
+    return {
+      ...seed,
+      generated_at: generatedAt,
+      registry: FAKE_REGISTRY,
+      agents: [...FAKE_AGENTS],
+      home: fakeHome(world, pendingHarvests, seed.roundup.stale),
+      sessions: [...world.sessions],
+      kept: [...world.kept],
+      snoozed: [...world.snoozed],
+    };
+  };
 
   const tailItem = (id: string, row: SessionRow | undefined): TailItem =>
     row === undefined
@@ -352,7 +406,9 @@ export function createMemoryApi(seed: ListResponse, options: MemoryApiOptions = 
       after(latencyMs, () => ({ command: `rl resume ${id}`, launched: false, via: 'iterm2' })),
     previewHandoff: (request) =>
       after(latencyMs, (): HandoffResponse => {
-        const known = current.sessions.some((row) => row.project_key === request.project_key);
+        const known = listedWorld(current, Date.now()).sessions.some(
+          (row) => row.project_key === request.project_key,
+        );
         const agent = FAKE_AGENTS.find((entry) => entry.source === request.agent);
         const name = agent?.agent ?? request.agent;
         const document = {

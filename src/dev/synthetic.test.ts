@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SESSION_ROW_KEYS } from '../api/types';
-import { keepEvery, syntheticRows } from './synthetic';
+import { keepEvery, snoozeEvery, syntheticRows } from './synthetic';
 
 const NOW = Date.UTC(2026, 9, 16, 12);
 
@@ -80,6 +80,26 @@ describe('keepEvery', () => {
       expect(row).toMatchObject({ decision: 'keep', woke: false, badges: ['kept'] });
       expect(Date.parse(row.kept_at ?? '')).toBeGreaterThanOrEqual(Date.parse(row.mtime));
       expect(Date.parse(row.kept_at ?? '')).toBeLessThanOrEqual(NOW);
+    });
+  });
+});
+
+describe('snoozeEvery', () => {
+  it('snoozes every nth inbox row that has not woken, with some snoozes open-ended', () => {
+    const rows = syntheticRows(200, NOW).map((row, index) => ({ ...row, woke: index === 39 }));
+    const world = snoozeEvery({ sessions: rows, kept: [], snoozed: [] }, 20, NOW);
+    const picked = rows.filter((_, index) => index % 20 === 19 && index !== 39);
+    expect(world.snoozed.map((row) => row.id)).toEqual(picked.map((row) => row.id));
+    expect(world.sessions.map((row) => row.id)).toContain(rows[39]?.id);
+    expect(world.sessions).toHaveLength(191);
+    expect(world.snoozed.filter((row) => row.snoozed_until === null)).toHaveLength(1);
+    const dated = world.snoozed.flatMap((row) =>
+      row.snoozed_until === null ? [] : [Date.parse(row.snoozed_until)],
+    );
+    expect(dated).toHaveLength(8);
+    expect(dated.every((ms) => ms > NOW)).toBe(true);
+    world.snoozed.forEach((row) => {
+      expect(row).toMatchObject({ woke: false, badges: ['snoozed'] });
     });
   });
 });

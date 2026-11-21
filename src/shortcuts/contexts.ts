@@ -47,6 +47,7 @@ export const inboxListContext = defineContext({
     keep: { displayName: 'Keep long-term', defaults: 's', allowsKeyRepeat: false },
     keepGoing: { displayName: 'Keep going (mark reviewed)', defaults: 'r', allowsKeyRepeat: false },
     unkeep: { displayName: 'Return to inbox', defaults: 'u', allowsKeyRepeat: false },
+    wake: { displayName: 'Wake now', defaults: 'w', allowsKeyRepeat: false },
     resume: { displayName: 'Resume in terminal', defaults: ['o', 'enter'], allowsKeyRepeat: false },
     triageWithAgent: {
       displayName: 'Triage the project with an agent',

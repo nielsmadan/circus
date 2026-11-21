@@ -41,6 +41,16 @@ export function makeRow(overrides: Partial<SessionRow> = {}): SessionRow {
   return { ...BASE_ROW, badges: [], ...overrides };
 }
 
+export function makeSnoozedRow(overrides: Partial<SessionRow> = {}): SessionRow {
+  return makeRow({
+    snoozed_at: '2026-10-15T09:00:00+00:00',
+    snoozed_until: '2026-10-20T09:00:00+00:00',
+    in_recent: false,
+    badges: ['snoozed'],
+    ...overrides,
+  });
+}
+
 export function makeKeptRow(overrides: Partial<SessionRow> = {}): SessionRow {
   return makeRow({
     decision: 'keep',

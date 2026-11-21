@@ -4,9 +4,11 @@ import { useShortcuts } from '@shortcutkit/react';
 import type { Split } from './derive';
 
 const SPLIT_LABELS: Readonly<Record<Split, string>> = {
+  today: 'Today',
   recent: 'Recent',
   woke: 'Woke',
   all: 'All',
+  snoozed: 'Snoozed',
   kept: 'Kept',
 };
 

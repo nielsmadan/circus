@@ -2,7 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { syntheticRows } from '../dev/synthetic';
 import { medianMs } from '../test/perf';
 import type { OutboxEntry } from './outbox';
-import { indexRows, projectCounts, searchRows, splitRows, visibleSessions } from './derive';
+import { localDayBounds } from '../localDay';
+import {
+  indexRows,
+  projectCounts,
+  searchRows,
+  splitCounts,
+  splitRows,
+  visibleSessions,
+} from './derive';
 
 describe('derive performance', () => {
   vi.useRealTimers();
@@ -29,9 +37,13 @@ describe('derive performance', () => {
 
   it('runs the derive chain over 5 000 rows within 8 ms', () => {
     const index = indexRows(rows);
+    const today = localDayBounds(Date.UTC(2026, 9, 16, 12));
     const median = medianMs(() => {
       const visible = visibleSessions(rows, entries, applied);
-      const all = splitRows({ sessions: visible, kept: [] }, 'all', index);
+      const sources = { sessions: visible, kept: [], snoozed: [] };
+      const all = splitRows(sources, 'all', index, today);
+      splitRows(sources, 'today', index, today);
+      splitCounts(sources, index, today);
       projectCounts(all, index);
       searchRows(all, 'proj login', index);
     });

@@ -1,37 +1,85 @@
 import type { AppInfo, DecisionAction, ListResponse, SessionRow } from '../api/types';
+import type { DayBounds } from '../localDay';
 import type { InboxListAction } from '../shortcuts/contexts';
 import type { Applied } from './applied';
 import { presenceUnknownText, stillRunningText } from './messages';
 import type { OutboxEntry } from './outbox';
 import { inScope, type Scope } from './scope';
 
-export type Split = 'recent' | 'woke' | 'all' | 'kept';
-const INBOX_SPLITS: readonly Split[] = Object.freeze(['recent', 'woke', 'all']);
-const WITH_KEPT: readonly Split[] = Object.freeze([...INBOX_SPLITS, 'kept']);
+export type Split = 'today' | 'recent' | 'woke' | 'all' | 'snoozed' | 'kept';
 
-export function availableSplits(list: Pick<ListResponse, 'kept'> | null): readonly Split[] {
-  return list?.kept === undefined ? INBOX_SPLITS : WITH_KEPT;
+const splitsWith = ({ snoozed, kept }: { snoozed: boolean; kept: boolean }): readonly Split[] =>
+  Object.freeze([
+    'today',
+    'recent',
+    'woke',
+    'all',
+    ...(snoozed ? (['snoozed'] as const) : []),
+    ...(kept ? (['kept'] as const) : []),
+  ]);
+
+const INBOX_SPLITS = splitsWith({ snoozed: false, kept: false });
+const WITH_KEPT = splitsWith({ snoozed: false, kept: true });
+const WITH_SNOOZED = splitsWith({ snoozed: true, kept: false });
+const WITH_BOTH = splitsWith({ snoozed: true, kept: true });
+
+export function availableSplits(
+  list: Pick<ListResponse, 'kept' | 'snoozed'> | null,
+): readonly Split[] {
+  const kept = list?.kept !== undefined;
+  if (list?.snoozed === undefined) return kept ? WITH_KEPT : INBOX_SPLITS;
+  return kept ? WITH_BOTH : WITH_SNOOZED;
 }
 
 export const isKept = (row: SessionRow): boolean => row.decision === 'keep';
 
+// a kept session stays in Kept whatever its snooze says, and ringleader never marks it woke
+export const isSnoozed = (row: SessionRow): boolean =>
+  row.snoozed_at !== null && !row.woke && !isKept(row);
+
 export interface SplitSources {
   readonly sessions: readonly SessionRow[];
   readonly kept: readonly SessionRow[];
+  readonly snoozed: readonly SessionRow[];
 }
 
 const NO_ROWS: readonly SessionRow[] = Object.freeze([]);
 
 export function listedRows(
-  list: { readonly sessions: readonly SessionRow[]; readonly kept?: readonly SessionRow[] } | null,
+  list: {
+    readonly sessions: readonly SessionRow[];
+    readonly kept?: readonly SessionRow[];
+    readonly snoozed?: readonly SessionRow[];
+  } | null,
 ): readonly SessionRow[] {
   const sessions = list?.sessions ?? NO_ROWS;
   const kept = list?.kept ?? NO_ROWS;
-  return kept.length === 0 ? sessions : [...sessions, ...kept];
+  const snoozed = list?.snoozed ?? NO_ROWS;
+  return kept.length === 0 && snoozed.length === 0 ? sessions : [...sessions, ...kept, ...snoozed];
 }
 
+export function mapSources(
+  sources: SplitSources,
+  each: (rows: readonly SessionRow[]) => readonly SessionRow[],
+): SplitSources {
+  return {
+    sessions: each(sources.sessions),
+    kept: each(sources.kept),
+    snoozed: each(sources.snoozed),
+  };
+}
+
+export const isParkedSplit = (split: Split): split is 'kept' | 'snoozed' =>
+  split === 'kept' || split === 'snoozed';
+
 export function sourcesOf(row: SessionRow): SplitSources {
-  return isKept(row) ? { sessions: NO_ROWS, kept: [row] } : { sessions: [row], kept: NO_ROWS };
+  if (isKept(row)) return { sessions: NO_ROWS, kept: [row], snoozed: NO_ROWS };
+  if (isSnoozed(row)) return { sessions: NO_ROWS, kept: NO_ROWS, snoozed: [row] };
+  return { sessions: [row], kept: NO_ROWS, snoozed: NO_ROWS };
+}
+
+function bucketFor(sources: SplitSources, split: Split): readonly SessionRow[] {
+  return isParkedSplit(split) ? sources[split] : sources.sessions;
 }
 
 export interface ProjectCount {
@@ -130,12 +178,34 @@ function sortByMtime(
     .map((keyed) => keyed.row);
 }
 
-export function splitRows(sources: SplitSources, split: Split, index: RowIndex): SessionRow[] {
-  return sortSplit(split === 'kept' ? sources.kept : sources.sessions, split, index);
+export function splitRows(
+  sources: SplitSources,
+  split: Split,
+  index: RowIndex,
+  today: DayBounds | null,
+): SessionRow[] {
+  return sortSplit(bucketFor(sources, split), split, index, today);
 }
 
-function sortSplit(rows: readonly SessionRow[], split: Split, index: RowIndex): SessionRow[] {
+const isToday = (row: SessionRow, index: RowIndex, today: DayBounds | null): boolean => {
+  if (today === null) return false;
+  const ms = mtimeOf(row, index);
+  return ms >= today.start && ms < today.end;
+};
+
+function sortSplit(
+  rows: readonly SessionRow[],
+  split: Split,
+  index: RowIndex,
+  today: DayBounds | null,
+): SessionRow[] {
   switch (split) {
+    case 'today':
+      return sortByMtime(
+        rows.filter((row) => isToday(row, index, today)),
+        index,
+        true,
+      );
     case 'recent':
       return sortByMtime(
         rows.filter((row) => row.in_recent),
@@ -150,9 +220,23 @@ function sortSplit(rows: readonly SessionRow[], split: Split, index: RowIndex): 
       );
     case 'all':
       return sortByMtime(rows, index, false);
+    case 'snoozed':
+      return soonestWakeFirst(rows);
     case 'kept':
       return newestKeptFirst(rows, index);
   }
+}
+
+function wakeMs(row: SessionRow): number {
+  const ms = row.snoozed_until === null ? NaN : parseMtime(row.snoozed_until);
+  return Number.isNaN(ms) ? Infinity : ms;
+}
+
+function soonestWakeFirst(rows: readonly SessionRow[]): SessionRow[] {
+  return rows
+    .map((row) => ({ row, ms: wakeMs(row) }))
+    .sort((a, b) => a.ms - b.ms || compareStrings(a.row.id, b.row.id))
+    .map((keyed) => keyed.row);
 }
 
 function newestKeptFirst(rows: readonly SessionRow[], index: RowIndex): SessionRow[] {
@@ -165,14 +249,27 @@ function newestKeptFirst(rows: readonly SessionRow[], index: RowIndex): SessionR
     .map((keyed) => keyed.row);
 }
 
-export function splitCounts({ sessions, kept }: SplitSources): Record<Split, number> {
+export function splitCounts(
+  { sessions, kept, snoozed }: SplitSources,
+  index: RowIndex,
+  today: DayBounds | null,
+): Record<Split, number> {
+  let todays = 0;
   let recent = 0;
   let woke = 0;
   for (const row of sessions) {
+    if (isToday(row, index, today)) todays += 1;
     if (row.in_recent) recent += 1;
     if (row.woke) woke += 1;
   }
-  return { recent, woke, all: sessions.length, kept: kept.length };
+  return {
+    today: todays,
+    recent,
+    woke,
+    all: sessions.length,
+    snoozed: snoozed.length,
+    kept: kept.length,
+  };
 }
 
 export function filterByScope(
@@ -274,7 +371,8 @@ export function nextSelection(
 }
 
 const GUARDED_ACTIONS: ReadonlySet<DecisionAction> = new Set(['archive', 'delete', 'harvest']);
-const PARKING_ACTIONS: ReadonlySet<DecisionAction> = new Set(['snooze', 'keep', 'keep_going']);
+const REFUSED_WHEN_KEPT: ReadonlySet<DecisionAction> = new Set(['snooze', 'keep', 'keep_going']);
+const REFUSED_WHEN_SNOOZED: ReadonlySet<DecisionAction> = new Set(['keep', 'keep_going']);
 
 export const DECISION_FOR: Readonly<Partial<Record<InboxListAction, DecisionAction>>> = {
   harvestArchive: 'harvest',
@@ -284,11 +382,23 @@ export const DECISION_FOR: Readonly<Partial<Record<InboxListAction, DecisionActi
   keep: 'keep',
   keepGoing: 'keep_going',
   unkeep: 'unkeep',
+  wake: 'wake',
 };
 
-export function isParking(action: InboxListAction): boolean {
+function stateRefusal(action: DecisionAction, row: SessionRow): string | null {
+  if (action === 'unkeep') return isKept(row) ? null : `${row.label} isn’t kept`;
+  if (action === 'wake') {
+    if (isSnoozed(row)) return null;
+    return isKept(row) ? `${row.label} is kept` : `${row.label} isn’t snoozed`;
+  }
+  if (REFUSED_WHEN_KEPT.has(action) && isKept(row)) return `${row.label} is already kept`;
+  if (REFUSED_WHEN_SNOOZED.has(action) && isSnoozed(row)) return `${row.label} is snoozed`;
+  return null;
+}
+
+export function offers(action: InboxListAction, row: SessionRow): boolean {
   const decision = DECISION_FOR[action];
-  return decision !== undefined && PARKING_ACTIONS.has(decision);
+  return decision === undefined || stateRefusal(decision, row) === null;
 }
 
 const ARCHIVE_BLOCK = 'cannot archive ';
@@ -305,8 +415,8 @@ export function acceptsAny(action: DecisionAction, rows: readonly SessionRow[]):
 }
 
 export function clientRefusal(action: DecisionAction, row: SessionRow): string | null {
-  if (action === 'unkeep') return isKept(row) ? null : `${row.label} isn’t kept`;
-  if (PARKING_ACTIONS.has(action)) return isKept(row) ? `${row.label} is already kept` : null;
+  const refused = stateRefusal(action, row);
+  if (refused !== null) return refused;
   if (!GUARDED_ACTIONS.has(action)) return null;
   if (row.running === true) return stillRunningText(row.label);
   if (row.running === null) return presenceUnknownText(row.label);

@@ -211,7 +211,7 @@ export function syntheticRows(count: number, nowMs: number): SessionRow[] {
   return drafts.map((d) => toRow(d, nowMs, d === newest));
 }
 
-export type FakeWorld = Required<Pick<ListResponse, 'sessions' | 'kept'>>;
+export type FakeWorld = Required<Pick<ListResponse, 'sessions' | 'kept' | 'snoozed'>>;
 
 function withoutBadges(row: SessionRow, ...badges: readonly Badge[]): Badge[] {
   return row.badges.filter((each) => !badges.includes(each));
@@ -224,6 +224,27 @@ export function keptRow(row: SessionRow, keptAt: string): SessionRow {
     kept_at: keptAt,
     woke: false,
     badges: [...withoutBadges(row, 'kept'), 'kept'],
+  };
+}
+
+export function snoozedRow(row: SessionRow, snoozedAt: string, until: string | null): SessionRow {
+  return {
+    ...row,
+    snoozed_at: snoozedAt,
+    snoozed_until: until,
+    woke: false,
+    badges: [...withoutBadges(row, 'snoozed'), 'snoozed'],
+  };
+}
+
+export function unsnoozedRow(row: SessionRow): SessionRow {
+  return {
+    ...row,
+    reviewed_at_mtime: null,
+    snoozed_at: null,
+    snoozed_until: null,
+    woke: false,
+    badges: withoutBadges(row, 'snoozed'),
   };
 }
 
@@ -247,5 +268,27 @@ export function keepEvery(rows: readonly SessionRow[], every: number, nowMs: num
     kept: rows
       .filter((_, index) => index % every === every - 1)
       .map((row) => keptRow(row, keptAt(row))),
+    snoozed: [],
+  };
+}
+
+const OPEN_ENDED_EVERY = 5;
+
+export function snoozeEvery(world: FakeWorld, every: number, nowMs: number): FakeWorld {
+  const picked = (row: SessionRow, index: number) => !row.woke && index % every === every - 1;
+  const chosen = world.sessions.filter(picked);
+  const until = (position: number) =>
+    position % OPEN_ENDED_EVERY === OPEN_ENDED_EVERY - 1
+      ? null
+      : isoSeconds(nowMs + (1 + (position % 30)) * DAY_MS);
+  return {
+    ...world,
+    sessions: world.sessions.filter((row, index) => !picked(row, index)),
+    snoozed: [
+      ...world.snoozed,
+      ...chosen.map((row, position) =>
+        snoozedRow(row, isoSeconds(nowMs - DAY_MS), until(position)),
+      ),
+    ],
   };
 }

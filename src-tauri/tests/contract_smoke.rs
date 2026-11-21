@@ -209,4 +209,34 @@ fn rl_json_contract_against_the_sandbox_world() {
     let again = decide(DecisionAction::Unkeep);
     assert_eq!(again["status"], "ok", "{again}");
     assert_eq!(again["wrote"], false, "{again}");
+
+    let snooze = json(
+        &rl.decide(&DecideRequest {
+            action: DecisionAction::Snooze,
+            id: other_id.clone(),
+            mtime: text(other, "mtime"),
+            fingerprint: None,
+            until: Some("2099-01-01T00:00:00.000Z".to_string()),
+        })
+        .expect("snooze outcome"),
+    );
+    assert_eq!(snooze["status"], "ok", "{snooze}");
+    let snoozed = json(&rl.list().expect("list after snooze"));
+    assert!(
+        row_ids(&snoozed, "snoozed").contains(&other_id),
+        "{snoozed}"
+    );
+    assert!(!row_ids(&snoozed, "sessions").contains(&other_id));
+
+    let wake = decide(DecisionAction::Wake);
+    assert_eq!(wake["status"], "ok", "{wake}");
+    assert_eq!(wake["action"], "wake", "{wake}");
+    assert_eq!(wake["wrote"], true, "{wake}");
+    let woken = json(&rl.list().expect("list after wake"));
+    assert!(row_ids(&woken, "sessions").contains(&other_id), "{woken}");
+    assert!(!row_ids(&woken, "snoozed").contains(&other_id));
+
+    let rewake = decide(DecisionAction::Wake);
+    assert_eq!(rewake["status"], "ok", "{rewake}");
+    assert_eq!(rewake["wrote"], false, "{rewake}");
 }

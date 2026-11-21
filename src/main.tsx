@@ -16,16 +16,21 @@ declare global {
 
 async function createApi(): Promise<CircusApi> {
   if (import.meta.env.VITE_FAKE_API !== '1') return createCircusApi();
-  const [{ createMemoryApi }, { keepEvery, syntheticRows }, golden] = await Promise.all([
-    import('./dev/memoryApi'),
-    import('./dev/synthetic'),
-    import('./test/golden/contract-list.json'),
-  ]);
+  const [{ createMemoryApi }, { keepEvery, snoozeEvery, syntheticRows }, golden] =
+    await Promise.all([
+      import('./dev/memoryApi'),
+      import('./dev/synthetic'),
+      import('./test/golden/contract-list.json'),
+    ]);
   const env = import.meta.env;
   const nowMs = Date.now();
   const seed: ListResponse = {
     ...(golden.default as unknown as ListResponse),
-    ...keepEvery(syntheticRows(Number(env.VITE_FAKE_ROWS ?? 2000), nowMs), 50, nowMs),
+    ...snoozeEvery(
+      keepEvery(syntheticRows(Number(env.VITE_FAKE_ROWS ?? 2000), nowMs), 50, nowMs),
+      100,
+      nowMs,
+    ),
   };
   const fake = createMemoryApi(seed, {
     latencyMs: Number(env.VITE_FAKE_LATENCY_MS ?? 150),

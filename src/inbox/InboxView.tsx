@@ -9,6 +9,7 @@ import {
 } from 'react';
 import type { CircusApi } from '../api/client';
 import { toCircusError, type DecisionAction, type NextStep, type SessionRow } from '../api/types';
+import { localDayBounds } from '../localDay';
 import { AgentPicker } from './AgentPicker';
 import { ConfirmDialog } from './ConfirmDialog';
 import { inboxListContext, isModalOpen, type InboxListAction } from '../shortcuts/contexts';
@@ -16,13 +17,16 @@ import { isEditingText } from '@shortcutkit/dom';
 import { useRegistrySnapshot, useShortcutContext } from '@shortcutkit/react';
 import { SnoozeDialog } from '../snooze/SnoozeDialog';
 import { Banners } from './Banners';
+import { WakingSoon } from './HomeLists';
 import { Conversation } from './Conversation';
 import {
   acceptsAny,
   availableSplits,
   DECISION_FOR,
   indexRows,
+  isParkedSplit,
   listedRows,
+  mapSources,
   narrowRows,
   nextSelection,
   parseMtime,
@@ -36,7 +40,6 @@ import {
   type Split,
   type SplitSources,
 } from './derive';
-import { WakingSoon } from './HomeLists';
 import {
   blockedToast,
   bulkConfirmText,
@@ -117,7 +120,7 @@ function emptyText(
   if (scope !== null) {
     const noun = scopeNoun(scope);
     if (following !== null) {
-      const waiting = split === 'kept' ? 'kept' : 'waiting';
+      const waiting = isParkedSplit(split) ? split : 'waiting';
       return `This ${noun} is done. Next: ${following.scope.label} (${following.count} ${waiting}) — Enter`;
     }
     return remaining > 0
@@ -125,12 +128,16 @@ function emptyText(
       : `This ${noun} is done — all caught up. Esc shows all ${noun}s`;
   }
   switch (split) {
+    case 'today':
+      return 'Nothing from today is waiting';
     case 'recent':
       return `Nothing from the last ${recentDays} days is waiting`;
     case 'woke':
       return 'No snoozed sessions have woken up';
     case 'all':
       return 'Inbox zero';
+    case 'snoozed':
+      return 'No snoozed sessions';
     case 'kept':
       return 'No kept sessions';
   }
@@ -158,16 +165,16 @@ function nextSplit(split: Split, delta: number, splits: readonly Split[]): Split
   return splits[(at + delta + splits.length) % splits.length] ?? split;
 }
 
-function rowsById(list: InboxController['list']): ReadonlyMap<string, SessionRow> {
-  const all = [...listedRows(list), ...(list?.home?.rows ?? NO_ROWS)];
-  return new Map(all.map((row) => [row.id, row]));
-}
-
 function pick(ids: readonly string[], byId: ReadonlyMap<string, SessionRow>): SessionRow[] {
   return ids.flatMap((id) => {
     const row = byId.get(id);
     return row === undefined ? [] : [row];
   });
+}
+
+function rowsById(list: InboxController['list']): ReadonlyMap<string, SessionRow> {
+  const all = [...listedRows(list), ...(list?.home?.rows ?? NO_ROWS)];
+  return new Map(all.map((row) => [row.id, row]));
 }
 
 export function InboxView({
@@ -186,23 +193,27 @@ export function InboxView({
   const [snoozeTargets, setSnoozeTargets] = useState<readonly SessionRow[] | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
 
-  const { list, rows, keptRows, notify, rescan } = controller;
+  const { list, rows, keptRows, snoozedRows, notify, rescan } = controller;
   const splits = availableSplits(list);
   const split = splits.includes(chosenSplit) ? chosenSplit : 'recent';
   const listed = useMemo(() => listedRows(list), [list]);
   const index = useMemo(() => indexRows(listed), [listed]);
   const sources = useMemo(
-    (): SplitSources => ({ sessions: rows, kept: keptRows }),
-    [rows, keptRows],
+    (): SplitSources => ({ sessions: rows, kept: keptRows, snoozed: snoozedRows }),
+    [rows, keptRows, snoozedRows],
   );
-  const inSplit = useMemo(() => splitRows(sources, split, index), [sources, split, index]);
-  const homeDir = controller.info?.home_dir ?? null;
-  const projects = useMemo(() => projectCounts(inSplit, index), [inSplit, index]);
   const generatedAt = list?.generated_at ?? null;
   const nowMs = useMemo(
     () => (generatedAt === null ? null : parseMtime(generatedAt)),
     [generatedAt],
   );
+  const today = useMemo(() => (nowMs === null ? null : localDayBounds(nowMs)), [nowMs]);
+  const inSplit = useMemo(
+    () => splitRows(sources, split, index, today),
+    [sources, split, index, today],
+  );
+  const homeDir = controller.info?.home_dir ?? null;
+  const projects = useMemo(() => projectCounts(inSplit, index), [inSplit, index]);
   const { content, scope } = useSidebarContent(
     sidebar.view,
     { projects, rows: inSplit, index, home: homeDir, nowMs },
@@ -221,11 +232,12 @@ export function InboxView({
   const { markedRows } = marks;
   const counts = useMemo(
     () =>
-      splitCounts({
-        sessions: filterByScope(rows, scope, index),
-        kept: filterByScope(keptRows, scope, index),
-      }),
-    [rows, keptRows, scope, index],
+      splitCounts(
+        mapSources(sources, (each) => filterByScope(each, scope, index)),
+        index,
+        today,
+      ),
+    [sources, scope, index, today],
   );
   const following = useMemo(
     () =>
@@ -241,7 +253,10 @@ export function InboxView({
   );
   const byId = useMemo(() => rowsById(list), [list]);
   const home = list?.home ?? null;
-  const wakingSoon = useMemo(() => pick(home?.waking_soon ?? [], byId), [home, byId]);
+  const wakingSoon = useMemo(
+    () => (splits.includes('snoozed') ? NO_ROWS : pick(home?.waking_soon ?? [], byId)),
+    [splits, home, byId],
+  );
   const allProjects = useMemo(
     () => new Map(projectCounts(rows, index).map((project) => [project.key, project])),
     [rows, index],
@@ -331,7 +346,7 @@ export function InboxView({
       if (next === split) return;
       setChosenSplit(next);
       setView(INITIAL_VIEW);
-      const nextRows = splitRows(sources, next, index);
+      const nextRows = splitRows(sources, next, index, today);
       updateScopes((current) => {
         const live = current === null ? null : resolvePeriod(current, nowMs);
         return live !== null && nextRows.some((row) => inScope(row, live, mtimeOf(row, index)))
@@ -339,10 +354,10 @@ export function InboxView({
           : null;
       });
     },
-    [split, sources, index, nowMs, updateScopes],
+    [split, sources, index, today, nowMs, updateScopes],
   );
   const inCurrentView = (row: SessionRow): boolean =>
-    narrowRows(splitRows(sourcesOf(row), split, index), scope, query, index).length > 0;
+    narrowRows(splitRows(sourcesOf(row), split, index, today), scope, query, index).length > 0;
   const onPreviewWidth = useCallback((width: number) => {
     gridRef.current?.style.setProperty('grid-template-columns', sidebarColumns(width));
   }, []);
@@ -496,7 +511,7 @@ export function InboxView({
     const [only, ...others] = targets;
     if (only === undefined) {
       if (following !== null && scope !== null) {
-        goTo(following.scope, split === 'kept' ? 'kept' : 'all');
+        goTo(following.scope, isParkedSplit(split) ? split : 'all');
       }
       return;
     }

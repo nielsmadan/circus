@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DecideRequest, SessionRow } from '../api/types';
-import { makeKeptRow, makeList, makeRow } from '../test/fixtures';
+import { makeKeptRow, makeList, makeRow, makeSnoozedRow } from '../test/fixtures';
 import { createMemoryApi } from './memoryApi';
 
 const rowA = makeRow({ id: 'claude-code:a', session_id: 'a', last_prompt: 'fix the login flake' });
@@ -202,6 +202,95 @@ describe('createMemoryApi', () => {
     });
   });
 
+  it('moves a snoozed row into the snoozed list and a woken one back to the inbox', async () => {
+    const reviewed = { ...rowA, reviewed_at_mtime: rowA.mtime };
+    const api = createMemoryApi(makeList([reviewed, rowOther]), { latencyMs: 10 });
+    const until = '2026-10-20T09:00:00.000Z';
+    expect(await decided(api, request(reviewed, { action: 'snooze', until }))).toMatchObject({
+      status: 'ok',
+      wrote: true,
+    });
+    const afterSnooze = await listed(api);
+    expect(afterSnooze.sessions.map((row) => row.id)).toEqual([rowOther.id]);
+    expect(afterSnooze.snoozed).toEqual([
+      expect.objectContaining({ id: rowA.id, snoozed_until: until, badges: ['snoozed'] }),
+    ]);
+
+    expect(await decided(api, request(reviewed, { action: 'wake' }))).toMatchObject({
+      status: 'ok',
+      action: 'wake',
+      wrote: true,
+    });
+    const afterWake = await listed(api);
+    expect(afterWake.snoozed).toEqual([]);
+    expect(afterWake.sessions.find((row) => row.id === rowA.id)).toMatchObject({
+      snoozed_at: null,
+      snoozed_until: null,
+      reviewed_at_mtime: null,
+      badges: [],
+    });
+  });
+
+  it('writes nothing when waking a row that is not snoozed', async () => {
+    const api = createMemoryApi(seed, { latencyMs: 10 });
+    expect(await decided(api, request(rowA, { action: 'wake' }))).toMatchObject({
+      status: 'ok',
+      wrote: false,
+      message: `${rowA.label} is not snoozed`,
+    });
+  });
+
+  it('fails to wake a session that left the registry', async () => {
+    const api = createMemoryApi(seed, { latencyMs: 10 });
+    const gone = makeRow({ id: 'claude-code:gone' });
+    expect(await decided(api, request(gone, { action: 'wake' }))).toMatchObject({
+      status: 'failed',
+      code: 'gone',
+    });
+  });
+
+  it('lists a snooze that has run out as a woken inbox row', async () => {
+    const expired = makeSnoozedRow({
+      id: 'claude-code:x',
+      snoozed_until: '2026-10-01T09:00:00+00:00',
+    });
+    const api = createMemoryApi(makeList([rowA], { snoozed: [expired] }), { latencyMs: 10 });
+    const list = await listed(api);
+    expect(list.snoozed).toEqual([]);
+    expect(list.sessions.find((row) => row.id === expired.id)).toMatchObject({ woke: true });
+    expect((await decided(api, request(expired, { action: 'wake' }))).wrote).toBe(false);
+  });
+
+  it('keeps an open-ended snooze snoozed and wakes it', async () => {
+    const open = makeSnoozedRow({ id: 'claude-code:open', snoozed_until: null });
+    const api = createMemoryApi(makeList([rowA], { snoozed: [open] }), { latencyMs: 10 });
+    expect((await listed(api)).snoozed?.map((row) => row.id)).toEqual([open.id]);
+    expect((await decided(api, request(open, { action: 'wake' }))).wrote).toBe(true);
+  });
+
+  it('snoozes and wakes a kept row without moving it out of the kept list', async () => {
+    const kept = makeKeptRow({ id: 'claude-code:kept' });
+    const api = createMemoryApi(makeList([rowA], { kept: [kept] }), { latencyMs: 10 });
+    const until = '2026-10-20T09:00:00.000Z';
+    await decided(api, request(kept, { action: 'snooze', until }));
+    const snoozed = await listed(api);
+    expect(snoozed.snoozed).toEqual([]);
+    expect(snoozed.kept).toEqual([expect.objectContaining({ id: kept.id, snoozed_until: until })]);
+    expect((await decided(api, request(kept, { action: 'wake' }))).wrote).toBe(true);
+    expect((await listed(api)).kept).toEqual([
+      expect.objectContaining({ id: kept.id, snoozed_at: null, snoozed_until: null }),
+    ]);
+  });
+
+  it('keeps a snoozed row in the kept list', async () => {
+    const snoozed = makeSnoozedRow({ id: 'claude-code:sn' });
+    const api = createMemoryApi(makeList([rowA], { snoozed: [snoozed] }), { latencyMs: 10 });
+    expect((await decided(api, request(snoozed, { action: 'keep' }))).status).toBe('ok');
+    const list = await listed(api);
+    expect(list.snoozed).toEqual([]);
+    expect(list.kept).toEqual([expect.objectContaining({ id: snoozed.id, decision: 'keep' })]);
+  });
+
   it('archives a kept row out of the kept list', async () => {
     const kept = makeKeptRow({ id: 'claude-code:k' });
     const api = createMemoryApi(makeList([rowA], { kept: [kept] }), { latencyMs: 10 });
@@ -377,6 +466,16 @@ describe('createMemoryApi hand-off', () => {
     await vi.advanceTimersByTimeAsync(10);
     return pending;
   };
+
+  it('plans a hand-off of a project whose only session has woken from its snooze', async () => {
+    const expired = makeSnoozedRow({
+      id: 'claude-code:x',
+      project_key: '/u/work/woken',
+      snoozed_until: '2026-10-01T09:00:00+00:00',
+    });
+    const api = createMemoryApi(makeList([rowA], { snoozed: [expired] }), { latencyMs: 10 });
+    expect(await preview(api, '/u/work/woken', 'codex')).toMatchObject({ status: 'ok' });
+  });
 
   it('plans a hand-off of a waiting project to an installed agent', async () => {
     const api = createMemoryApi(seed, { latencyMs: 10 });

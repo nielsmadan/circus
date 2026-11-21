@@ -2,7 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CircusError, DecideOutcome, DecideRequest, SessionRow } from '../api/types';
 import { createFakeApi, NATIVE_INFO, okOutcome, type FakeApi } from '../test/fakeApi';
-import { makeKeptRow, makeList, makeRow, makeScanSummary } from '../test/fixtures';
+import { makeKeptRow, makeList, makeRow, makeScanSummary, makeSnoozedRow } from '../test/fixtures';
 import type { Settled } from './outbox';
 import { landList, settleEffects, useInbox, type LandedList } from './useInbox';
 
@@ -408,6 +408,20 @@ describe('useInbox decisions', () => {
     await flush();
     expect(ids(result.current.rows)).toEqual([rowA.id, kept.id]);
     expect(result.current.keptRows).toEqual([]);
+  });
+
+  it('lists snoozed rows apart and hides one while its wake is pending', async () => {
+    const snoozed = makeSnoozedRow({ id: 'claude-code:sn', label: 'snoozed one' });
+    const api = createFakeApi(makeList([rowA], { snoozed: [snoozed] }));
+    const { result } = await mountInbox(api);
+    expect(ids(result.current.snoozedRows)).toEqual([snoozed.id]);
+    act(() => {
+      expect(result.current.decide('wake', snoozed)).toBe(true);
+    });
+    expect(result.current.snoozedRows).toEqual([]);
+    await advance(4_000);
+    await flush();
+    expect(texts(result)).toContain('Back in the inbox: “snoozed one”');
   });
 
   it('shows the not-kept toast when an unkeep wrote nothing', async () => {

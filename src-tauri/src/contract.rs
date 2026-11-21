@@ -10,6 +10,7 @@ pub enum DecisionAction {
     Keep,
     KeepGoing,
     Unkeep,
+    Wake,
 }
 
 impl DecisionAction {
@@ -22,6 +23,7 @@ impl DecisionAction {
             Self::Keep => "keep",
             Self::KeepGoing => "keep_going",
             Self::Unkeep => "unkeep",
+            Self::Wake => "wake",
         }
     }
 }

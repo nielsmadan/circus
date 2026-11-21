@@ -1,6 +1,6 @@
 # Circus
 
-A macOS desktop app for [ringleader](https://github.com/nielsmadan/ringleader). Circus shows the dormant agent sessions ringleader tracks as an inbox: a session list, a reading pane with the end of the transcript, and one-key decisions (harvest and archive, archive, delete, snooze, keep long-term, keep going) with undo, and a Kept split from which kept sessions return to the inbox. Archive and Harvests tabs exist as placeholders. Everything the app knows about sessions comes from ringleader's versioned JSON mode (`--json` on `rl inbox`, `rl data export` and the guarded `rl session` verbs).
+A macOS desktop app for [ringleader](https://github.com/nielsmadan/ringleader). Circus shows the dormant agent sessions ringleader tracks as an inbox: a session list, a reading pane with the end of the transcript, and one-key decisions (harvest and archive, archive, delete, snooze, keep long-term, keep going) with undo, and Today, Snoozed and Kept splits, from which snoozed sessions wake and kept sessions return to the inbox. Archive and Harvests tabs exist as placeholders. Everything the app knows about sessions comes from ringleader's versioned JSON mode (`--json` on `rl inbox`, `rl data export` and the guarded `rl session` verbs).
 
 Tauri 2, React 19, TypeScript, Rust. Unsigned, no updater; macOS only.
 

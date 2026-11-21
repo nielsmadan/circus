@@ -128,6 +128,25 @@ describe('settledToast', () => {
     });
   });
 
+  it('says a woken session is back in the inbox', () => {
+    expect(enqueuedToast(decision('wake'), NOW).text).toBe('Wake “fix flaky login”');
+    expect(
+      settledToast({ kind: 'outcome', decision: decision('wake'), outcome: outcome('wake', {}) })
+        .text,
+    ).toBe('Back in the inbox: “fix flaky login”');
+    expect(batchSettledToast('wake', 2).text).toBe('Back in the inbox: 2 sessions');
+    expect(undoToast(decision('wake')).text).toBe('Undid wake “fix flaky login”');
+  });
+
+  it('says a session was not snoozed when a wake wrote nothing', () => {
+    const toast = settledToast({
+      kind: 'outcome',
+      decision: decision('wake'),
+      outcome: outcome('wake', { wrote: false }),
+    });
+    expect(toast.text).toBe('“fix flaky login” isn’t snoozed');
+  });
+
   it('words every unkeep toast as a return to the inbox', () => {
     const failed = settledToast({
       kind: 'outcome',

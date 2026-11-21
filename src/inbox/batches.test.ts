@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DecideOutcome } from '../api/types';
+import type { DecideOutcome, DecisionAction } from '../api/types';
 import { makeRow } from '../test/fixtures';
 import { advanceBatch, alreadySent, memberEnd, startBatch, type MemberEnd } from './batches';
 import type { Decision } from './outbox';
@@ -54,20 +54,23 @@ describe('memberEnd', () => {
     until: null,
   };
 
+  const outcomeOf = (action: DecisionAction, overrides: Partial<DecideOutcome> = {}) => ({
+    version: 1 as const,
+    status: 'ok' as const,
+    kind: 'outcome' as const,
+    action,
+    id: decision.row.id,
+    code: null,
+    reason: null,
+    message: 'done',
+    wrote: true,
+    path: null,
+    warnings: [],
+    ...overrides,
+  });
+
   it('counts only an ok outcome as ok', () => {
-    const outcome: DecideOutcome = {
-      version: 1,
-      status: 'ok',
-      kind: 'outcome',
-      action: 'archive',
-      id: decision.row.id,
-      code: null,
-      reason: null,
-      message: 'done',
-      wrote: true,
-      path: null,
-      warnings: [],
-    };
+    const outcome = outcomeOf('archive');
     expect(memberEnd({ kind: 'outcome', decision, outcome: { ...outcome, status: 'ok' } })).toBe(
       'ok',
     );
@@ -83,24 +86,12 @@ describe('memberEnd', () => {
     ).toBe('not_ok');
   });
 
-  it('counts an unkeep of a row that was not kept as not ok', () => {
-    const unkeep: Decision = { ...decision, action: 'unkeep' };
-    const outcome: DecideOutcome = {
-      version: 1,
-      status: 'ok',
-      kind: 'outcome',
-      action: 'unkeep',
-      id: decision.row.id,
-      code: null,
-      reason: null,
-      message: 'not kept',
-      wrote: false,
-      path: null,
-      warnings: [],
-    };
-    expect(memberEnd({ kind: 'outcome', decision: unkeep, outcome })).toBe('not_ok');
-    expect(
-      memberEnd({ kind: 'outcome', decision: unkeep, outcome: { ...outcome, wrote: true } }),
-    ).toBe('ok');
+  it.each(['unkeep', 'wake'] as const)('counts a %s that changed nothing as not ok', (action) => {
+    const restore: Decision = { ...decision, action };
+    const unchanged = outcomeOf(action, { wrote: false });
+    expect(memberEnd({ kind: 'outcome', decision: restore, outcome: unchanged })).toBe('not_ok');
+    expect(memberEnd({ kind: 'outcome', decision: restore, outcome: outcomeOf(action) })).toBe(
+      'ok',
+    );
   });
 });

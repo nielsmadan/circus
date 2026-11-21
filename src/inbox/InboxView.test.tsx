@@ -11,7 +11,14 @@ import {
   type Deferred,
   type FakeApi,
 } from '../test/fakeApi';
-import { makeHome, makeKeptRow, makeList, makeRow, makeStep } from '../test/fixtures';
+import {
+  makeHome,
+  makeKeptRow,
+  makeList,
+  makeRow,
+  makeSnoozedRow,
+  makeStep,
+} from '../test/fixtures';
 import { shortcutHarness, type ShortcutHarness } from '../test/shortcuts';
 import { scrollToShow } from './rowWindow';
 
@@ -63,6 +70,8 @@ const wokeNewer = makeRow({
   mtime: '2026-09-01T12:00:00+00:00',
   in_recent: false,
   woke: true,
+  snoozed_at: '2026-08-20T12:00:00+00:00',
+  snoozed_until: '2026-08-25T12:00:00+00:00',
 });
 const wokeOlder = makeRow({
   id: 'claude-code:w2',
@@ -71,6 +80,8 @@ const wokeOlder = makeRow({
   mtime: '2026-08-01T12:00:00+00:00',
   in_recent: false,
   woke: true,
+  snoozed_at: '2026-07-20T12:00:00+00:00',
+  snoozed_until: '2026-07-25T12:00:00+00:00',
 });
 const ROWS = [docs, login, wokeNewer, parser, wokeOlder];
 
@@ -274,7 +285,7 @@ describe('InboxView list and reading pane', () => {
     await renderInbox(makeList([stale, snoozed]));
     expect(field('Parked')).toBe('—');
     press('KeyJ');
-    expect(field('Parked')).toMatch(/^snoozed until /);
+    expect(field('Parked')).toBe('snoozed until Oct 20, 2026, 11:00 AM');
   });
 });
 
@@ -553,14 +564,14 @@ async function openKept() {
 }
 
 describe('InboxView Kept split', () => {
-  it('offers Recent, Woke and All when the list has no kept rows', async () => {
+  it('offers Today, Recent, Woke and All when the list has no kept rows', async () => {
     await renderInbox();
-    expect(tabNames()).toEqual(['Recent 3', 'Woke 2', 'All 5']);
+    expect(tabNames()).toEqual(['Today 0', 'Recent 3', 'Woke 2', 'All 5']);
   });
 
   it('cycles into Kept with tab and lists the latest kept first', async () => {
     await renderInbox(withKept());
-    expect(tabNames()).toEqual(['Recent 3', 'Woke 2', 'All 5', 'Kept 2']);
+    expect(tabNames()).toEqual(['Today 0', 'Recent 3', 'Woke 2', 'All 5', 'Kept 2']);
     press('Tab');
     press('Tab');
     press('Tab');
@@ -568,7 +579,7 @@ describe('InboxView Kept split', () => {
     expect(shownIds()).toEqual([keptNew.id, keptOld.id]);
     expect(field('Parked')).toBe('kept since Oct 10, 2026');
     press('Tab');
-    expect(screen.getByRole('tab', { name: /Recent/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: /Today/ })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('says when nothing is kept', async () => {
@@ -677,7 +688,7 @@ describe('InboxView Kept split', () => {
     press('KeyE', { shiftKey: true });
     await advance(4_000);
     await flush();
-    expect(tabNames()).toEqual(['Recent 3', 'Woke 2', 'All 5']);
+    expect(tabNames()).toEqual(['Today 0', 'Recent 3', 'Woke 2', 'All 5']);
     expect(screen.getByRole('tab', { name: /Recent/ })).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -740,6 +751,171 @@ describe('InboxView Kept split', () => {
     press('Slash');
     type(search(), 'long ago');
     expect(shownIds()).toEqual([keptOld.id]);
+  });
+});
+
+const todayAt = (hour: number) => new Date(2026, 9, 16, hour).toISOString();
+const morning = makeRow({
+  id: 'claude-code:m',
+  session_id: 'm',
+  label: 'this morning',
+  mtime: todayAt(8),
+  file_fingerprint: 'fp-m',
+});
+const noon = makeRow({
+  id: 'claude-code:n',
+  session_id: 'n',
+  label: 'around noon',
+  mtime: todayAt(11),
+  file_fingerprint: 'fp-n',
+});
+const wakesSoon = makeSnoozedRow({
+  id: 'claude-code:s1',
+  session_id: 's1',
+  label: 'wakes soon',
+  snoozed_until: '2026-10-18T07:00:00+00:00',
+  file_fingerprint: 'fp-s1',
+});
+const wakesLater = makeSnoozedRow({
+  id: 'claude-code:s2',
+  session_id: 's2',
+  label: 'wakes later',
+  snoozed_until: null,
+  project: '/u/work/proj-03',
+  project_short: '…/work/proj-03',
+  project_key: '/u/work/proj-03',
+  project_label: 'proj-03',
+  file_fingerprint: 'fp-s2',
+});
+const withSnoozed = () => makeList(ROWS, { snoozed: [wakesLater, wakesSoon] });
+
+async function openSnoozed() {
+  await renderInbox(withSnoozed());
+  click(screen.getByRole('tab', { name: /Snoozed/ }));
+}
+
+describe('InboxView Today and Snoozed splits', () => {
+  it('lists today’s sessions newest first, before Recent', async () => {
+    await renderInbox(makeList([...ROWS, morning, noon]));
+    press('Tab', { shiftKey: true });
+    expect(screen.getByRole('tab', { name: /Today 2/ })).toHaveAttribute('aria-selected', 'true');
+    expect(shownIds()).toEqual([noon.id, morning.id]);
+  });
+
+  it('moves Today on when a list from the next day lands', async () => {
+    await renderInbox(makeList([...ROWS, morning]));
+    expect(screen.getByRole('tab', { name: /Today/ })).toHaveTextContent('Today 1');
+    api.setList(makeList([...ROWS, morning], { generated_at: '2026-10-17T12:00:00+00:00' }));
+    act(() => {
+      harness.registry.dispatch(inboxListContext, 'rescan');
+    });
+    await flush();
+    expect(screen.getByRole('tab', { name: /Today/ })).toHaveTextContent('Today 0');
+  });
+
+  it('lists snoozed sessions by when they wake, open-ended last, with the wake time', async () => {
+    await openSnoozed();
+    expect(tabNames()).toEqual(['Today 0', 'Recent 3', 'Woke 2', 'All 5', 'Snoozed 2']);
+    expect(shownIds()).toEqual([wakesSoon.id, wakesLater.id]);
+    const [soon, later] = within(listbox()).getAllByRole('option');
+    expect(soon).toHaveTextContent('wakes Oct 18, 09:00 AM');
+    expect(later).toHaveTextContent('no wake date');
+    press('KeyJ');
+    expect(field('Parked')).toBe('snoozed, no wake date');
+  });
+
+  it('wakes a snoozed session with w after the undo window', async () => {
+    await openSnoozed();
+    press('KeyW');
+    expect(shownIds()).toEqual([wakesLater.id]);
+    expect(screen.getByText('Wake “wakes soon”')).toBeInTheDocument();
+    await advance(4_000);
+    expect(api.decideRequest(0)).toEqual({
+      action: 'wake',
+      id: wakesSoon.id,
+      mtime: wakesSoon.mtime,
+      fingerprint: 'fp-s1',
+      until: null,
+    });
+    await flush();
+    expect(screen.getByText('Back in the inbox: “wakes soon”')).toBeInTheDocument();
+  });
+
+  it('undoes a wake with z and selects the snoozed session again', async () => {
+    await openSnoozed();
+    press('KeyW');
+    press('KeyZ');
+    expect(shownIds()).toEqual([wakesSoon.id, wakesLater.id]);
+    expect(selectedId()).toBe(wakesSoon.id);
+    expect(screen.getByText('Undid wake “wakes soon”')).toBeInTheDocument();
+  });
+
+  it('refuses to wake an inbox session and to keep a snoozed one', async () => {
+    await renderInbox(withSnoozed());
+    press('KeyW');
+    expect(screen.getByText('fix parser isn’t snoozed')).toBeInTheDocument();
+    click(screen.getByRole('tab', { name: /Snoozed/ }));
+    press('KeyS');
+    press('KeyR');
+    expect(screen.getAllByText('wakes soon is snoozed')).toHaveLength(2);
+    await advance(4_000);
+    expect(api.count('decide')).toBe(0);
+  });
+
+  it('shows no wake time on sessions whose snooze has run out', async () => {
+    await renderInbox(withSnoozed());
+    press('Tab');
+    expect(shownIds()).toEqual([wokeOlder.id, wokeNewer.id]);
+    expect(listbox()).not.toHaveTextContent(/wakes|no wake date/);
+    expect(field('Parked')).toBe('—');
+  });
+
+  it('shows no wake time on a kept session that is also snoozed', async () => {
+    const keptSnoozed = makeKeptRow({
+      id: 'claude-code:ks',
+      label: 'kept and snoozed',
+      snoozed_at: '2026-10-10T09:00:00+00:00',
+      snoozed_until: '2026-10-20T09:00:00+00:00',
+    });
+    await renderInbox(makeList(ROWS, { kept: [keptSnoozed], snoozed: [] }));
+    click(screen.getByRole('tab', { name: /Kept/ }));
+    expect(field('Parked')).toBe('kept since Oct 1, 2026');
+    expect(listbox()).not.toHaveTextContent(/wakes|no wake date/);
+    expect(within(pane()).queryByRole('button', { name: /Wake now/ })).toBeNull();
+  });
+
+  it('re-snoozes a snoozed session with h', async () => {
+    await openSnoozed();
+    press('KeyH');
+    expect(screen.getByRole('dialog', { name: /Snooze/ })).toBeInTheDocument();
+  });
+
+  it('offers Wake now instead of Keep and Keep going in the reading pane', async () => {
+    await openSnoozed();
+    const buttons = within(pane())
+      .getAllByRole('button')
+      .map((button) => button.firstChild?.textContent);
+    expect(buttons).toEqual([
+      'Wake now',
+      'Harvest & archive',
+      'Archive',
+      'Delete',
+      'Snooze',
+      'Resume',
+    ]);
+  });
+
+  it('offers the next repo with snoozed sessions and stays in Snoozed on Enter', async () => {
+    await openSnoozed();
+    click(within(repos()).getByRole('button', { name: /proj-00/ }));
+    expect(screen.getByRole('tab', { name: /Snoozed/ })).toHaveTextContent('Snoozed 1');
+    press('KeyW');
+    expect(
+      screen.getByText('This repo is done. Next: proj-03 (1 snoozed) — Enter'),
+    ).toBeInTheDocument();
+    press('Enter');
+    expect(screen.getByRole('tab', { name: /Snoozed/ })).toHaveAttribute('aria-selected', 'true');
+    expect(shownIds()).toEqual([wakesLater.id]);
   });
 });
 
@@ -1085,10 +1261,16 @@ describe('InboxView next steps and sidebar', () => {
     expect(within(strip()).getByText('All caught up')).toBeVisible();
   });
 
-  it('lists the sessions waking soon', async () => {
+  it('lists the sessions waking soon while the list carries no snoozed rows', async () => {
     await renderInbox(withHome());
     const waking = screen.getByRole('region', { name: 'Waking soon' });
     expect(within(waking).getByRole('listitem')).toHaveTextContent('wait for reviewin 2d');
+  });
+
+  it('leaves waking-soon sessions to the Snoozed split once the list carries it', async () => {
+    const list = withHome();
+    await renderInbox({ ...list, snoozed: [] });
+    expect(screen.queryByRole('region', { name: 'Waking soon' })).toBeNull();
   });
 
   it("shows each row's status", async () => {
@@ -1659,6 +1841,7 @@ describe('InboxView selection and bulk decisions', () => {
     await renderInbox();
     press('KeyX');
     expect(marked()).toHaveLength(1);
+    press('Tab', { shiftKey: true });
     press('Tab', { shiftKey: true });
     expect(screen.getByRole('tab', { name: /All/ })).toHaveAttribute('aria-selected', 'true');
     expect(shownIds()).toContain(parser.id);

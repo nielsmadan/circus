@@ -36,7 +36,7 @@ function projectQueue(rows: readonly SessionRow[]): HomeProject[] {
 }
 
 export function fakeHome(
-  { sessions: rows, kept }: FakeWorld,
+  { sessions: rows, kept }: Pick<FakeWorld, 'sessions' | 'kept'>,
   pendingHarvests: number,
   roundupStale: boolean,
 ): Home {

@@ -2,7 +2,7 @@ export const TAIL_MAX_IDS = 16;
 export const TAIL_CHARS = 50_000;
 
 export type DecisionAction =
-  'harvest' | 'archive' | 'delete' | 'snooze' | 'keep' | 'keep_going' | 'unkeep';
+  'harvest' | 'archive' | 'delete' | 'snooze' | 'keep' | 'keep_going' | 'unkeep' | 'wake';
 export type OutcomeStatus = 'ok' | 'refused' | 'empty' | 'failed';
 export type OutcomeCode =
   | 'changed'
@@ -129,6 +129,7 @@ export interface ListResponse {
   scan?: ScanSummary | null;
   sessions: SessionRow[];
   kept?: SessionRow[];
+  snoozed?: SessionRow[];
 }
 
 export interface ScanSummary {
@@ -217,6 +218,7 @@ export const LIST_RESPONSE_KEYS = [
   'roundup',
   'scan',
   'sessions',
+  'snoozed',
   'version',
 ] as const satisfies readonly (keyof ListResponse)[];
 

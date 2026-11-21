@@ -10,7 +10,9 @@ import {
   type RefObject,
 } from 'react';
 import type { SessionRow } from '../api/types';
+import { isSnoozed } from './derive';
 import { ROW_HEIGHT, rowWindow } from './rowWindow';
+import { formatted, NO_WAKE_DATE, WAKE_FORMAT } from './timeFormats';
 
 export const RowRenderProbe = createContext<((id: string) => void) | null>(null);
 
@@ -71,7 +73,7 @@ const SessionRowItem = memo(function SessionRowItem({
         {row.running === true && (
           <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-green-500" />
         )}
-        <span className="min-w-0 flex-1 truncate font-medium">{row.label}</span>
+        <span className="min-w-[30%] flex-1 truncate font-medium">{row.label}</span>
         {row.running === true && (
           <span className={`${CHIP} bg-green-500/15 text-green-800 dark:text-green-400`}>
             running
@@ -82,6 +84,13 @@ const SessionRowItem = memo(function SessionRowItem({
             {badge}
           </span>
         ))}
+        {isSnoozed(row) && (
+          <span className="min-w-0 truncate text-xs text-blue-700 dark:text-blue-300">
+            {row.snoozed_until === null
+              ? NO_WAKE_DATE
+              : `wakes ${formatted(WAKE_FORMAT, row.snoozed_until)}`}
+          </span>
+        )}
         <span className="shrink-0 text-xs opacity-60">{row.age_human}</span>
       </div>
       <div className="flex min-w-0 items-center gap-2 text-xs">
