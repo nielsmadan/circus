@@ -1,0 +1,25 @@
+{
+  "ringleader": {
+    "repository": "nielsmadan/ringleader",
+    "version": "0.2.0",
+    "commit": "63e5a47e4faeb4fa58c65074a6a824d0bb6b7344",
+    "assets": {
+      "ringleader-{version}-py3-none-any.whl": "sha256:7c7450496fdec8233f1ebaf3bb25869c4342d38efa0e79355e21842ab408f158",
+      "contract-golden.tar.gz": "sha256:76f597bfe4db3e76bcdd1887f116dec331c8e674c1921d46ee7e95b58d010b5a"
+    },
+    "files": [
+      "ringleader.json",
+      "src/test/golden"
+    ],
+    "after_update": [
+      [
+        "just",
+        "sync-ringleader-manifest"
+      ],
+      [
+        "just",
+        "sync-golden"
+      ]
+    ]
+  }
+}

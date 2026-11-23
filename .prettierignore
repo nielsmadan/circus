@@ -5,3 +5,4 @@ pnpm-lock.yaml
 .local
 src/test/golden
 docs/plans
+scripts/pins.json

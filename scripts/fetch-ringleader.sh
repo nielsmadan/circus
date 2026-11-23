@@ -10,7 +10,7 @@ pinned="$(jq -r .sha256 "$manifest")"
 dir="$repo_root/.cache/ringleader/$version"
 
 if [ ! -x "$dir/venv/bin/rl" ]; then
-  [ "${#pinned}" -eq 64 ] || { echo "ringleader.json has no sha256 for $version; run: just pin-ringleader $version" >&2; exit 1; }
+  [ "${#pinned}" -eq 64 ] || { echo "ringleader.json has no sha256 for $version; run: just update-ringleader $version" >&2; exit 1; }
   rm -rf "$dir.partial"
   mkdir -p "$dir.partial"
   gh release download "v$version" --repo "$repository" --dir "$dir.partial" \

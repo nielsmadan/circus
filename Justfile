@@ -68,6 +68,7 @@ doctor:
     warn uv "https://docs.astral.sh/uv/getting-started/installation/"
     warn jq "https://jqlang.org/download/"
     warn gh "https://cli.github.com"
+    warn curtains "brew install nielsmadan/tap/curtaincall"
     printf '  ok       ringleader %s pinned in ringleader.json\n' "$(jq -r .latest ringleader.json 2>/dev/null || echo '?')"
     if {{just_executable()}} --justfile {{justfile()}} golden-check >/dev/null 2>&1; then
         printf '  ok       golden documents\n'
@@ -112,6 +113,7 @@ check:
     @cargo clippy --locked --manifest-path {{manifest}} --all-targets -- -D warnings
     @cargo test --locked --manifest-path {{manifest}}
     @bash scripts/sandbox-env-test.sh
+    @{{just_executable()}} --justfile {{justfile()}} manifest-check
 
 # Run the app against your live sessions through the installed rl.
 run: ensure-dist
@@ -129,18 +131,28 @@ sandbox: ensure-dist
 ringleader-dir:
     @if [ -n "${CIRCUS_RINGLEADER_DIR:-}" ]; then printf '%s\n' "$CIRCUS_RINGLEADER_DIR"; else scripts/fetch-ringleader.sh; fi
 
-# Pin a ringleader release: version and wheel sha256 from its SHA256SUMS.
-pin-ringleader version:
+# Pin a published ringleader release, the latest or VERSION, then sync ringleader.json and the goldens.
+update-ringleader *args:
+    @curtains pins update ringleader {{args}}
+
+# Warn when a newer ringleader release is published than the one pinned.
+check-ringleader:
+    @curtains pins check ringleader
+
+# Copy the version, wheel and sha256 pinned in scripts/pins.json into ringleader.json.
+sync-ringleader-manifest:
     #!/usr/bin/env bash
     set -euo pipefail
-    repository="$(jq -r .repository ringleader.json)"
-    wheel="ringleader-{{version}}-py3-none-any.whl"
-    sums="$(gh release download "v{{version}}" --repo "$repository" --pattern SHA256SUMS --output -)"
-    sha="$(printf '%s\n' "$sums" | awk -v w="$wheel" '$2 == w || $2 == "*" w { print $1 }')"
-    [ "${#sha}" -eq 64 ] || { echo "no sha256 for $wheel in v{{version}}'s SHA256SUMS" >&2; exit 1; }
-    jq --arg v "{{version}}" --arg w "$wheel" --arg s "$sha" '.latest = $v | .wheel = $w | .sha256 = $s' ringleader.json > ringleader.json.tmp
+    jq --slurpfile pins scripts/pins.json "$(cat scripts/ringleader-manifest.jq)" ringleader.json > ringleader.json.tmp
     mv ringleader.json.tmp ringleader.json
-    printf 'pinned ringleader %s (%s)\n' "{{version}}" "$sha"
+
+# Fail when ringleader.json disagrees with the pin in scripts/pins.json.
+manifest-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    jq --slurpfile pins scripts/pins.json "$(cat scripts/ringleader-manifest.jq)" ringleader.json \
+        | cmp -s - ringleader.json \
+        || { echo "ringleader.json disagrees with scripts/pins.json; run: just sync-ringleader-manifest" >&2; exit 1; }
 
 # Build release-shaped ringleader assets from a checkout, for contract work before a release.
 stage-ringleader checkout:

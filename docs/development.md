@@ -77,7 +77,7 @@ Next lever: if cold `rl` spawns (about 100–300 ms per call) still feel slow, t
 2. `just stage-ringleader <checkout>`, then run the recipes below with `CIRCUS_RINGLEADER_DIR=$PWD/.cache/ringleader/checkout`.
 3. Run `just sync-golden` here; update `src/api/types.ts`, the Rust `Envelope` and fixtures if the version or shapes changed.
 4. Run `just check` and `just test-smoke`. `just golden-check` fails when the copies drift.
-5. Once ringleader tags the release, `just pin-ringleader <version>` (raise `minimum` in `ringleader.json` if circus now depends on the change) and rerun `just golden-check` without the override.
+5. Once ringleader tags the release, `just update-ringleader` (or `just update-ringleader <version>`), which pins it in `scripts/pins.json`, copies it into `ringleader.json` and runs `just sync-golden`. Raise `minimum` in `ringleader.json` if circus now depends on the change, then rerun `just golden-check` without the override. `just check-ringleader` reports whether a newer release is out.
 
 Next lever: if updating `src/api/types.ts` by hand starts to cost real time (a larger contract, or a third consumer), ringleader would ship a JSON Schema per document beside `contract-golden.tar.gz`, circus would generate its types from it, and both sides would validate their goldens against it. The goldens stay either way, since they also catch value drift a schema allows. It is deliberately not built.
 
