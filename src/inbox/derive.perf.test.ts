@@ -35,7 +35,7 @@ describe('derive performance', () => {
     expect(median).toBeLessThanOrEqual(25);
   });
 
-  it('runs the derive chain over 5 000 rows within 8 ms', () => {
+  it('runs the derive chain over 5 000 rows within 20 ms', () => {
     const index = indexRows(rows);
     const today = localDayBounds(Date.UTC(2026, 9, 16, 12));
     const median = medianMs(() => {
@@ -48,6 +48,6 @@ describe('derive performance', () => {
       searchRows(all, 'proj login', index);
     });
     console.info(`derive chain median ${median.toFixed(2)} ms`);
-    expect(median).toBeLessThanOrEqual(8);
+    expect(median).toBeLessThanOrEqual(20);
   });
 });

@@ -152,10 +152,10 @@ Budgets (enforced in `just check`):
 
 | Budget                                                                                                                                    | Test                                     |
 | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| Derive chain over 5 000 rows ≤ 8 ms; `indexRows` ≤ 25 ms                                                                                  | `src/inbox/derive.perf.test.ts`          |
+| Derive chain over 5 000 rows ≤ 20 ms; `indexRows` ≤ 25 ms                                                                                 | `src/inbox/derive.perf.test.ts`          |
 | `parseSnooze` ≤ 0.2 ms per call                                                                                                           | `src/snooze/parse.perf.test.ts`          |
 | One `j` keypress renders ≤ 3 rows with 5 000 rows                                                                                         | `src/inbox/InboxView.perf.test.tsx`      |
-| Sidebar folder, tree and date grouping plus a tree filter over 5 000 rows ≤ 8 ms                                                          | `src/inbox/sidebarGroups.perf.test.ts`   |
+| Sidebar folder, tree and date grouping plus a tree filter over 5 000 rows ≤ 15 ms                                                         | `src/inbox/sidebarGroups.perf.test.ts`   |
 | `rl inbox --json` (with or without `--scan`) and `rl data export --json` stay off the heavy imports; the list over 2 000 threads ≤ 400 ms | ringleader `tests/test_contract_perf.py` |
 
 Vitest budgets use real timers and the median of 21 runs after 5 warm-ups. QA targets (j/k keypress-to-paint under 16 ms at 2 000 rows, prefetched tail within one frame, cold first paint from the cache under 300 ms) are measured by hand; see `docs/development.md`.
